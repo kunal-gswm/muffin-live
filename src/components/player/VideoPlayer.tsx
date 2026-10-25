@@ -302,14 +302,30 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* Middle State: Loading Spinner */}
       {playbackState.status === 'loading' && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-sm z-20 pointer-events-none">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/75 backdrop-blur-sm z-20 p-4">
           <div className="relative">
             <div className="w-12 h-12 rounded-full border-2 border-accent/20 border-t-accent animate-spin" />
             <Radio className="w-5 h-5 text-accent absolute inset-0 m-auto" />
           </div>
-          <span className="text-xs font-medium text-surface-300 mt-3 tracking-wide">
+          <span className="text-xs font-medium text-surface-200 mt-3 tracking-wide">
             Connecting to live feed...
           </span>
+          <div className="mt-4 flex items-center gap-2">
+            <button
+              onClick={onNextChannel}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-surface-850 hover:bg-surface-800 border border-surface-700 text-xs font-medium text-surface-200 hover:text-white transition-colors shadow-sm"
+              title="Skip to next channel in list"
+            >
+              <span>Skip to next channel</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={onClose}
+              className="px-2.5 py-1.5 rounded-md bg-surface-900 hover:bg-surface-850 border border-surface-750 text-xs text-surface-400 hover:text-surface-200 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 
@@ -337,31 +353,30 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           </h3>
 
           <p className="text-xs text-surface-400 max-w-md mb-4 leading-relaxed">
-            {playbackState.error?.isCorsOrNetwork
-              ? 'Public IPTV streams frequently rotate, restrict browser CORS origin, or go offline. You can retry, switch channels, or test the stream URL directly.'
-              : playbackState.error?.details || 'Unable to decode this video stream.'}
+            {playbackState.error?.details ||
+              'This public stream is currently unavailable, offline, or restricted by the broadcaster.'}
           </p>
 
           <div className="flex flex-wrap items-center justify-center gap-2.5">
             <button
+              onClick={onNextChannel}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-surface-950 bg-accent hover:bg-accent-hover rounded-md transition-colors shadow-sm"
+            >
+              Skip to Next Channel
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+
+            <button
               onClick={retry}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-surface-950 bg-accent hover:bg-accent-hover rounded-md transition-colors"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-surface-200 bg-surface-850 hover:bg-surface-800 border border-surface-700 rounded-md transition-colors"
             >
               <RefreshCw className="w-3.5 h-3.5" />
               Retry Stream
             </button>
 
             <button
-              onClick={onNextChannel}
-              className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-medium text-surface-200 bg-surface-850 hover:bg-surface-800 border border-surface-700 rounded-md transition-colors"
-            >
-              Next Channel
-              <ChevronRight className="w-3.5 h-3.5" />
-            </button>
-
-            <button
               onClick={handleCopyUrl}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-surface-400 hover:text-surface-200 bg-surface-900 border border-surface-750 rounded-md transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-surface-400 hover:text-surface-200 bg-surface-900 border border-surface-750 rounded-md transition-colors"
               title="Copy original stream URL"
             >
               {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}

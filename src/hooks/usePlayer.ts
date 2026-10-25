@@ -21,6 +21,7 @@ export function usePlayer({
   const hlsRef = useRef<Hls | null>(null);
   const retryCountRef = useRef<number>(0);
   const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const watchdogTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [playbackState, setPlaybackState] = useState<PlaybackState>({
     status: channel ? 'loading' : 'idle',
@@ -35,6 +36,11 @@ export function usePlayer({
 
   // Clean up any existing HLS instance and pending timeouts
   const cleanupHls = useCallback(() => {
+    if (watchdogTimeoutRef.current) {
+      clearTimeout(watchdogTimeoutRef.current);
+      watchdogTimeoutRef.current = null;
+    }
+
     if (retryTimeoutRef.current) {
       clearTimeout(retryTimeoutRef.current);
       retryTimeoutRef.current = null;
@@ -126,7 +132,6 @@ export function usePlayer({
   const getEffectiveStreamUrl = (rawUrl: string): string => {
     if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
       if (rawUrl.startsWith('http://')) {
-        // Upgrade to https:// to prevent immediate browser mixed-content blockage
         return rawUrl.replace('http://', 'https://');
       }
     }
@@ -156,20 +161,44 @@ export function usePlayer({
 
     const streamUrl = getEffectiveStreamUrl(channel.url);
 
+    // Watchdog timer: If connection hangs for > 7 seconds without video playing or error,
+    // trigger a friendly actionable timeout error instead of infinite spinning!
+    watchdogTimeoutRef.current = setTimeout(() => {
+      setPlaybackState((prev) => {
+        if (prev.status === 'loading') {
+          cleanupHls();
+          return {
+            ...prev,
+            status: 'error',
+            error: {
+              message: 'Connection timed out. Broadcast server took too long to respond.',
+              details: 'The stream source may be offline, geo-restricted, or rate-limited.',
+              isCorsOrNetwork: true,
+              canRetry: true,
+            },
+          };
+        }
+        return prev;
+      });
+    }, 7000);
+
     // Check MSE support with HLS.js
     if (isHlsSupported()) {
       const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: false, // Standard buffer mode for reliable public feeds
+        lowLatencyMode: false,
         backBufferLength: 60,
-        maxBufferLength: 30,
-        maxMaxBufferLength: 120,
-        maxBufferSize: 60 * 1000 * 1000,
-        fragLoadingTimeOut: 20000,
-        manifestLoadingTimeOut: 20000,
-        levelLoadingTimeOut: 20000,
+        maxBufferLength: 20,
+        maxMaxBufferLength: 90,
+        maxBufferSize: 50 * 1000 * 1000,
+        fragLoadingTimeOut: 6000,
+        manifestLoadingTimeOut: 5000,
+        levelLoadingTimeOut: 5000,
+        manifestLoadingMaxRetry: 1,
+        levelLoadingMaxRetry: 1,
+        fragLoadingMaxRetry: 1,
         xhrSetup: (xhr) => {
-          xhr.withCredentials = false; // Critical: avoid credential CORS rejection on public feeds
+          xhr.withCredentials = false;
         },
       });
 
@@ -196,6 +225,10 @@ export function usePlayer({
               if (mutedPromise !== undefined) {
                 mutedPromise
                   .then(() => {
+                    if (watchdogTimeoutRef.current) {
+                      clearTimeout(watchdogTimeoutRef.current);
+                      watchdogTimeoutRef.current = null;
+                    }
                     setPlaybackState((prev) => ({ ...prev, status: 'playing' }));
                   })
                   .catch(() => {
@@ -210,55 +243,39 @@ export function usePlayer({
       });
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (data.fatal) {
-          switch (data.type) {
-            case Hls.ErrorTypes.NETWORK_ERROR:
-              if (retryCountRef.current < 2) {
-                retryCountRef.current += 1;
-                retryTimeoutRef.current = setTimeout(() => {
-                  if (hlsRef.current) {
-                    hlsRef.current.startLoad();
-                  }
-                }, 1200);
-              } else {
-                const httpStatus = data.response?.code;
-                const errorInfo = formatPlaybackError(
-                  'networkError',
-                  data.details,
-                  httpStatus
-                );
-                cleanupHls();
-                setPlaybackState((prev) => ({
-                  ...prev,
-                  status: 'error',
-                  error: errorInfo,
-                }));
-              }
-              break;
+        const httpStatus = data.response?.code;
+        const isExplicitFatalCode = httpStatus === 403 || httpStatus === 404 || httpStatus === 401;
 
-            case Hls.ErrorTypes.MEDIA_ERROR:
-              if (retryCountRef.current < 2) {
-                retryCountRef.current += 1;
-                hls.recoverMediaError();
-              } else {
-                const errorInfo = formatPlaybackError('mediaError', data.details);
-                cleanupHls();
-                setPlaybackState((prev) => ({
-                  ...prev,
-                  status: 'error',
-                  error: errorInfo,
-                }));
-              }
-              break;
+        if (isExplicitFatalCode || data.fatal) {
+          // Clear watchdog since we have an immediate concrete error
+          if (watchdogTimeoutRef.current) {
+            clearTimeout(watchdogTimeoutRef.current);
+            watchdogTimeoutRef.current = null;
+          }
 
-            default:
-              cleanupHls();
-              setPlaybackState((prev) => ({
-                ...prev,
-                status: 'error',
-                error: formatPlaybackError('other', data.details),
-              }));
-              break;
+          if (isExplicitFatalCode || retryCountRef.current >= 1) {
+            const errorInfo = formatPlaybackError(
+              data.type === Hls.ErrorTypes.MEDIA_ERROR ? 'mediaError' : 'networkError',
+              data.details,
+              httpStatus
+            );
+            cleanupHls();
+            setPlaybackState((prev) => ({
+              ...prev,
+              status: 'error',
+              error: errorInfo,
+            }));
+          } else {
+            retryCountRef.current += 1;
+            retryTimeoutRef.current = setTimeout(() => {
+              if (hlsRef.current) {
+                if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                  hlsRef.current.recoverMediaError();
+                } else {
+                  hlsRef.current.startLoad();
+                }
+              }
+            }, 800);
           }
         }
       });
@@ -297,6 +314,10 @@ export function usePlayer({
     if (!video) return;
 
     const onPlay = () => {
+      if (watchdogTimeoutRef.current) {
+        clearTimeout(watchdogTimeoutRef.current);
+        watchdogTimeoutRef.current = null;
+      }
       setPlaybackState((prev) => ({ ...prev, status: 'playing', error: null }));
     };
 
@@ -319,7 +340,11 @@ export function usePlayer({
     };
 
     const onPlaying = () => {
-      setPlaybackState((prev) => ({ ...prev, status: 'playing' }));
+      if (watchdogTimeoutRef.current) {
+        clearTimeout(watchdogTimeoutRef.current);
+        watchdogTimeoutRef.current = null;
+      }
+      setPlaybackState((prev) => ({ ...prev, status: 'playing', error: null }));
     };
 
     const onTimeUpdate = () => {
@@ -333,7 +358,6 @@ export function usePlayer({
     // Native video error listener — only trigger error if Hls is NOT active
     const onError = () => {
       if (hlsRef.current) {
-        // When HLS.js is managing media, ignore native intermediate events
         return;
       }
       const mediaError = video.error;
