@@ -28,6 +28,8 @@ interface VideoPlayerProps {
   volume: number;
   isMuted: boolean;
   isFavorite: boolean;
+  isMiniPlayer?: boolean;
+  onToggleMiniPlayer?: (mini: boolean) => void;
   onVolumeChange: (volume: number, isMuted: boolean) => void;
   onToggleFavorite: (channelId: string) => void;
   onNextChannel: () => void;
@@ -41,6 +43,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   volume,
   isMuted,
   isFavorite,
+  isMiniPlayer: externalMini,
+  onToggleMiniPlayer,
   onVolumeChange,
   onToggleFavorite,
   onNextChannel,
@@ -49,8 +53,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
-  const [isMiniPlayer, setIsMiniPlayer] = useState(false);
+  const [internalMini, setInternalMini] = useState(false);
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const isMini = externalMini !== undefined ? externalMini : internalMini;
+  const toggleMini = () => {
+    if (onToggleMiniPlayer) {
+      onToggleMiniPlayer(!isMini);
+    } else {
+      setInternalMini((prev) => !prev);
+    }
+  };
 
   const {
     videoRef,
@@ -183,7 +196,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       className={`relative bg-black overflow-hidden shadow-2xl select-none group transition-all duration-200 ${
         playbackState.isFullscreen
           ? 'fixed inset-0 z-50 rounded-none border-none w-full h-full'
-          : isMiniPlayer
+          : isMini
           ? 'fixed bottom-20 md:bottom-6 right-4 sm:right-6 w-80 sm:w-96 max-w-[calc(100vw-2rem)] z-50 rounded-xl border border-surface-700 aspect-video'
           : 'w-full rounded-xl border border-surface-800 aspect-video max-h-[75vh]'
       }`}
@@ -253,12 +266,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           {/* Minimize / Expand Toggle */}
           {!playbackState.isFullscreen && (
             <button
-              onClick={() => setIsMiniPlayer((prev) => !prev)}
+              onClick={toggleMini}
               className="p-2 rounded-lg bg-surface-900/80 hover:bg-surface-800 text-surface-300 hover:text-white transition-colors border border-surface-700/60"
-              title={isMiniPlayer ? 'Expand to main view' : 'Minimize to corner while browsing'}
-              aria-label={isMiniPlayer ? 'Expand player' : 'Minimize player'}
+              title={isMini ? 'Expand to main view' : 'Minimize to corner while browsing'}
+              aria-label={isMini ? 'Expand player' : 'Minimize player'}
             >
-              {isMiniPlayer ? <Maximize2 className="w-4 h-4 text-accent" /> : <Minimize2 className="w-4 h-4" />}
+              {isMini ? <Maximize2 className="w-4 h-4 text-accent" /> : <Minimize2 className="w-4 h-4" />}
             </button>
           )}
 

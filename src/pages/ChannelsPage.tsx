@@ -5,7 +5,7 @@ import { FilterBar } from '../components/search/FilterBar';
 import { CategoryPills } from '../components/common/CategoryPills';
 
 interface ChannelsPageProps {
-  title: string;
+  title?: string;
   channels: Channel[];
   filters: FilterState;
   onFilterChange: (filters: Partial<FilterState>) => void;
@@ -23,7 +23,6 @@ interface ChannelsPageProps {
 }
 
 export const ChannelsPage: React.FC<ChannelsPageProps> = ({
-  title,
   channels,
   filters,
   onFilterChange,
@@ -41,13 +40,6 @@ export const ChannelsPage: React.FC<ChannelsPageProps> = ({
 }) => {
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between pb-2 border-b border-surface-800">
-        <h2 className="text-base font-bold text-white tracking-tight">{title}</h2>
-        <span className="text-xs text-surface-400 font-mono">
-          {channels.length} {channels.length === 1 ? 'channel' : 'channels'}
-        </span>
-      </div>
-
       <CategoryPills
         activeId={filters.category}
         onSelect={(catId) => {

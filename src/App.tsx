@@ -58,8 +58,9 @@ export function App() {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
 
-  // 4. Currently Playing Channel
+  // 4. Currently Playing Channel & Mini Player State
   const [activeChannel, setActiveChannel] = useState<Channel | null>(null);
+  const [isMiniPlayer, setIsMiniPlayer] = useState<boolean>(false);
 
   // 5. Search & Filters State
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -124,14 +125,6 @@ export function App() {
         setCategories(result.categories);
         setCountries(result.countries);
         setLanguages(result.languages);
-
-        // If a lastChannelId exists in preferences, verify it's still in this playlist
-        if (preferences.lastChannelId && !activeChannel) {
-          const matched = result.channels.find((c) => c.id === preferences.lastChannelId);
-          if (matched) {
-            setActiveChannel(matched);
-          }
-        }
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : 'Failed to fetch playlist.';
         setFetchError(message);
@@ -139,7 +132,7 @@ export function App() {
         setIsLoading(false);
       }
     },
-    [preferences.customPlaylists, preferences.lastChannelId, activeChannel]
+    [preferences.customPlaylists]
   );
 
   // Initial load or when active playlist changes
@@ -151,6 +144,7 @@ export function App() {
   const handleSelectChannel = useCallback(
     (channel: Channel) => {
       setActiveChannel(channel);
+      setIsMiniPlayer(false); // New selection expands into full view
 
       // Record to history and last played channel
       updatePreferences((prev) => {
@@ -338,9 +332,16 @@ export function App() {
     extra?: { category?: string }
   ) => {
     setActiveTab(tab);
-    if (tab === 'all') {
+
+    // If a channel is actively playing when navigating tabs, dock it to the mini player
+    // so the new tab's channels and catalog are cleanly browsable without taking over the screen
+    if (activeChannel) {
+      setIsMiniPlayer(true);
+    }
+
+    if (tab === 'all' || tab === 'countries' || tab === 'languages') {
       setSelectedCategory('all');
-      // When user clicks All Channels, switch to the master directory
+      // Switch to master directory for comprehensive catalog
       if (preferences.activePlaylistId !== 'master') {
         updatePreferences((prev) => ({ ...prev, activePlaylistId: 'master' }));
       }
@@ -428,9 +429,11 @@ export function App() {
         <main className="flex-1 p-4 md:p-6 max-w-7xl w-full mx-auto space-y-6 pb-24 md:pb-8">
           {/* Active Video Player (if a channel is currently chosen) */}
           {activeChannel && (
-            <div className="w-full">
+            <div className={isMiniPlayer ? '' : 'w-full'}>
               <VideoPlayer
                 channel={activeChannel}
+                isMiniPlayer={isMiniPlayer}
+                onToggleMiniPlayer={setIsMiniPlayer}
                 volume={preferences.volume}
                 isMuted={preferences.isMuted}
                 isFavorite={favoritesSet.has(activeChannel.id)}
@@ -440,7 +443,10 @@ export function App() {
                 onToggleFavorite={handleToggleFavorite}
                 onNextChannel={handleNextChannel}
                 onPrevChannel={handlePrevChannel}
-                onClose={() => setActiveChannel(null)}
+                onClose={() => {
+                  setActiveChannel(null);
+                  setIsMiniPlayer(false);
+                }}
                 onSelectChannel={handleSelectChannel}
               />
             </div>
