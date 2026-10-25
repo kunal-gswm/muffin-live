@@ -1,3 +1,5 @@
+export type SportType = 'all' | 'football' | 'cricket' | 'tennis' | 'basketball' | 'motorsport' | 'other';
+
 export interface Channel {
   id: string;
   name: string;
@@ -14,18 +16,38 @@ export interface Channel {
   isGeoBlocked?: boolean;
   isNot247?: boolean;
   quality?: string;
+  // Multi-source provenance & Sports metadata
+  sourceId?: string;
+  sourceName?: string;
+  sources?: string[];
+  sportType?: SportType;
+  isInferredSport?: boolean;
+  observedHealth?: 'working' | 'failing' | 'unknown';
+  timeToFirstFrameMs?: number;
 }
 
 export interface PlaylistSource {
   id: string;
   name: string;
   url: string;
-  category: 'general' | 'category' | 'country' | 'custom';
+  category: 'sports' | 'general' | 'category' | 'country' | 'custom';
   description: string;
   isDefault?: boolean;
+  isSportsSource?: boolean;
+  enabled?: boolean;
 }
 
-export type PlaybackStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'error' | 'ended';
+export type PlaybackStatus =
+  | 'idle'
+  | 'loading'
+  | 'connecting'
+  | 'playing'
+  | 'paused'
+  | 'buffering'
+  | 'error'
+  | 'failed'
+  | 'cancelled'
+  | 'ended';
 
 export interface PlaybackError {
   message: string;
@@ -33,6 +55,16 @@ export interface PlaybackError {
   details?: string;
   isCorsOrNetwork?: boolean;
   canRetry?: boolean;
+  httpStatus?: number;
+}
+
+export interface PlaybackDiagnostics {
+  timeToFirstFrameMs: number | null;
+  connectingStartedAt: number | null;
+  everSucceededInSession: boolean;
+  hlsFatalError?: string;
+  networkErrorCode?: number;
+  observedLatencyMs?: number;
 }
 
 export interface PlaybackState {
@@ -44,6 +76,8 @@ export interface PlaybackState {
   isLive: boolean;
   currentTime: number;
   duration: number;
+  timeToFirstFrameMs?: number | null;
+  everSucceededInSession?: boolean;
 }
 
 export type ViewMode = 'grid' | 'list';
@@ -54,6 +88,8 @@ export interface FilterState {
   category: string;
   country: string;
   language: string;
+  sportType: SportType;
+  sourceId: string;
   sortBy: SortOption;
   viewMode: ViewMode;
   favoritesOnly: boolean;
@@ -68,6 +104,8 @@ export interface RecentlyWatchedItem {
 
 export interface UserPreferences {
   activePlaylistId: string;
+  enabledSourceIds: string[];
+  connectionTimeoutSeconds: number;
   customPlaylists: PlaylistSource[];
   favorites: string[]; // channel IDs
   recentlyWatched: RecentlyWatchedItem[];
@@ -76,7 +114,17 @@ export interface UserPreferences {
   volume: number;
   isMuted: boolean;
   sidebarCollapsed: boolean;
-  activeTab: 'home' | 'all' | 'category' | 'countries' | 'languages' | 'favorites' | 'history' | 'settings';
+  activeTab:
+    | 'sports'
+    | 'home'
+    | 'all'
+    | 'category'
+    | 'countries'
+    | 'languages'
+    | 'favorites'
+    | 'history'
+    | 'schedule'
+    | 'settings';
   selectedCategory?: string;
   selectedCountry?: string;
   selectedLanguage?: string;
@@ -89,4 +137,38 @@ export interface PlaylistParseResult {
   languages: string[];
   totalParsed: number;
   errorsCount: number;
+  sourceId?: string;
+  sourceName?: string;
+}
+
+export interface SourceQualityStats {
+  sourceId: string;
+  sourceName: string;
+  totalEntries: number;
+  uniqueChannels: number;
+  sportsChannels: number;
+  duplicateCount: number;
+  duplicatePercentage: number;
+  countriesCount: number;
+  languagesCount: number;
+  testedCount: number;
+  workingCount: number;
+  failingCount: number;
+  avgTimeToFirstFrameMs: number | null;
+}
+
+export interface MatchFixture {
+  id: string;
+  sport: SportType;
+  competition: string;
+  homeTeam: string;
+  awayTeam: string;
+  startTime: string; // ISO string
+  status: 'upcoming' | 'live' | 'finished';
+  officialBroadcasters: {
+    region: string;
+    broadcaster: string;
+    officialUrl: string;
+  }[];
+  associatedChannelIds?: string[];
 }

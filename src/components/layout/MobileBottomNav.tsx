@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, Tv, LayoutGrid, Bookmark, Settings } from 'lucide-react';
+import { Trophy, Home, Tv, LayoutGrid, Bookmark, Settings } from 'lucide-react';
 import type { UserPreferences } from '../../types';
 
 interface MobileBottomNavProps {
@@ -20,6 +20,16 @@ export const MobileBottomNav: React.FC<MobileBottomNavProps> = ({
       aria-label="Mobile Navigation"
       className="md:hidden fixed bottom-0 inset-x-0 h-16 bg-surface-950/95 backdrop-blur-md border-t border-surface-800 z-40 px-3 flex items-center justify-around"
     >
+      <button
+        onClick={() => onSelectTab('sports')}
+        className={`flex flex-col items-center justify-center flex-1 py-1 transition-colors ${
+          activeTab === 'sports' ? 'text-accent font-semibold' : 'text-surface-400 hover:text-surface-200'
+        }`}
+      >
+        <Trophy className="w-5 h-5" />
+        <span className="text-[10px] mt-1">Sports</span>
+      </button>
+
       <button
         onClick={() => onSelectTab('home')}
         className={`flex flex-col items-center justify-center flex-1 py-1 transition-colors ${

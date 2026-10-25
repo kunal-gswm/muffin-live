@@ -4,7 +4,9 @@ const STORAGE_KEY = 'muffin_tv_preferences_v1';
 const MAX_RECENT_CHANNELS = 30;
 
 export const DEFAULT_PREFERENCES: UserPreferences = {
-  activePlaylistId: 'news',
+  activePlaylistId: 'sports',
+  enabledSourceIds: ['sports', 'freecasthub', 'freetv'],
+  connectionTimeoutSeconds: 12,
   customPlaylists: [],
   favorites: [],
   recentlyWatched: [],
@@ -13,8 +15,21 @@ export const DEFAULT_PREFERENCES: UserPreferences = {
   volume: 0.8,
   isMuted: false,
   sidebarCollapsed: false,
-  activeTab: 'home',
+  activeTab: 'sports',
 };
+
+const VALID_TABS = new Set([
+  'sports',
+  'home',
+  'all',
+  'category',
+  'countries',
+  'languages',
+  'favorites',
+  'history',
+  'schedule',
+  'settings',
+]);
 
 /**
  * Validates and sanitizes loaded preferences object.
@@ -55,19 +70,41 @@ function sanitizePreferences(raw: unknown): UserPreferences {
       })
     : [];
 
+  const enabledSourceIds = Array.isArray(data.enabledSourceIds)
+    ? data.enabledSourceIds.filter((id): id is string => typeof id === 'string')
+    : DEFAULT_PREFERENCES.enabledSourceIds;
+
+  const connectionTimeoutSeconds =
+    typeof data.connectionTimeoutSeconds === 'number' &&
+    !isNaN(data.connectionTimeoutSeconds) &&
+    data.connectionTimeoutSeconds >= 5 &&
+    data.connectionTimeoutSeconds <= 30
+      ? Math.round(data.connectionTimeoutSeconds)
+      : DEFAULT_PREFERENCES.connectionTimeoutSeconds;
+
   const viewMode: ViewMode = data.viewMode === 'list' ? 'list' : 'grid';
-  const volume = typeof data.volume === 'number' && !isNaN(data.volume)
-    ? Math.max(0, Math.min(1, data.volume))
-    : DEFAULT_PREFERENCES.volume;
+  const volume =
+    typeof data.volume === 'number' && !isNaN(data.volume)
+      ? Math.max(0, Math.min(1, data.volume))
+      : DEFAULT_PREFERENCES.volume;
   const isMuted = typeof data.isMuted === 'boolean' ? data.isMuted : false;
-  const sidebarCollapsed = typeof data.sidebarCollapsed === 'boolean' ? data.sidebarCollapsed : false;
-  const activePlaylistId = typeof data.activePlaylistId === 'string' && data.activePlaylistId
-    ? data.activePlaylistId
-    : DEFAULT_PREFERENCES.activePlaylistId;
+  const sidebarCollapsed =
+    typeof data.sidebarCollapsed === 'boolean' ? data.sidebarCollapsed : false;
+  const activePlaylistId =
+    typeof data.activePlaylistId === 'string' && data.activePlaylistId
+      ? data.activePlaylistId
+      : DEFAULT_PREFERENCES.activePlaylistId;
   const lastChannelId = typeof data.lastChannelId === 'string' ? data.lastChannelId : null;
+
+  const activeTab =
+    typeof data.activeTab === 'string' && VALID_TABS.has(data.activeTab)
+      ? (data.activeTab as UserPreferences['activeTab'])
+      : 'sports';
 
   return {
     activePlaylistId,
+    enabledSourceIds: enabledSourceIds.length > 0 ? enabledSourceIds : DEFAULT_PREFERENCES.enabledSourceIds,
+    connectionTimeoutSeconds,
     customPlaylists,
     favorites,
     recentlyWatched,
@@ -76,7 +113,7 @@ function sanitizePreferences(raw: unknown): UserPreferences {
     volume,
     isMuted,
     sidebarCollapsed,
-    activeTab: 'home',
+    activeTab,
   };
 }
 

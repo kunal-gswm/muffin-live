@@ -1,14 +1,22 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { usePlayer } from './usePlayer';
 import type { Channel } from '../types';
 
+vi.mock('../services/playbackService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../services/playbackService')>();
+  return {
+    ...actual,
+    canPlayNativeHls: () => true,
+  };
+});
+
 const mockChannel: Channel = {
   id: 'stream-test-1',
-  name: 'Test News Channel',
+  name: 'Test Sports Channel',
   url: 'https://example.com/test.m3u8',
   logo: null,
-  group: 'News',
+  group: 'Sports',
   country: 'US',
   language: 'English',
   tvgId: 'test.us',
@@ -17,6 +25,11 @@ const mockChannel: Channel = {
 describe('usePlayer hook', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('initializes with expected initial volume and muted state', () => {
@@ -69,7 +82,6 @@ describe('usePlayer hook', () => {
       })
     );
 
-    // With no real DOM video attached, calling togglePlay doesn't crash
     expect(() => {
       act(() => {
         result.current.togglePlay();
@@ -87,7 +99,6 @@ describe('usePlayer hook', () => {
       })
     );
 
-    // Create a mock video element
     const mockVideo = document.createElement('video');
     result.current.videoRef.current = mockVideo;
 
@@ -97,5 +108,49 @@ describe('usePlayer hook', () => {
 
     expect(result.current.playbackState.isMuted).toBe(true);
     expect(mockVideo.muted).toBe(true);
+  });
+
+  it('triggers watchdog connection timeout according to configurable timeout seconds', () => {
+    const { result } = renderHook(() =>
+      usePlayer({
+        channel: mockChannel,
+        connectionTimeoutSeconds: 10,
+      })
+    );
+
+    const mockVideo = document.createElement('video');
+    result.current.videoRef.current = mockVideo;
+
+    // Trigger loadStream with the attached video element
+    act(() => {
+      result.current.retry();
+    });
+
+    // Connecting state active
+    expect(['connecting', 'loading']).toContain(result.current.playbackState.status);
+
+    // Advance time before timeout (8 seconds) — should still be connecting
+    act(() => {
+      vi.advanceTimersByTime(8000);
+    });
+    expect(['connecting', 'loading']).toContain(result.current.playbackState.status);
+
+    // Advance past 10 seconds — watchdog should fire and transition to error
+    act(() => {
+      vi.advanceTimersByTime(2500);
+    });
+    expect(result.current.playbackState.status).toBe('error');
+    expect(result.current.playbackState.error?.message).toContain('Connection timed out');
+  });
+
+  it('tracks diagnostics when initialized', () => {
+    const { result } = renderHook(() =>
+      usePlayer({
+        channel: mockChannel,
+      })
+    );
+
+    expect(result.current.diagnostics).toBeDefined();
+    expect(result.current.diagnostics.everSucceededInSession).toBe(false);
   });
 });

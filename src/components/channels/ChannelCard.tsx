@@ -46,7 +46,7 @@ export const ChannelCard: React.FC<ChannelCardProps> = ({
       );
     }
 
-    if (playbackStatus === 'loading') {
+    if (playbackStatus === 'loading' || playbackStatus === 'connecting') {
       return (
         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium bg-sky-500/20 text-sky-300 border border-sky-500/30 rounded">
           <Radio className="w-3 h-3 animate-spin" />
@@ -55,7 +55,16 @@ export const ChannelCard: React.FC<ChannelCardProps> = ({
       );
     }
 
-    if (playbackStatus === 'error') {
+    if (playbackStatus === 'buffering') {
+      return (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded">
+          <Radio className="w-3 h-3 animate-spin" />
+          <span>Buffering</span>
+        </span>
+      );
+    }
+
+    if (playbackStatus === 'error' || playbackStatus === 'failed') {
       return (
         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium bg-red-500/20 text-red-400 border border-red-500/30 rounded">
           <AlertTriangle className="w-3 h-3" />
@@ -97,8 +106,8 @@ export const ChannelCard: React.FC<ChannelCardProps> = ({
           </div>
         </div>
 
-        {/* Quality and Geo-blocked badges */}
-        <div className="absolute top-1.5 left-1.5 flex items-center gap-1 z-10">
+        {/* Quality, Geo-blocked, Sport Badges */}
+        <div className="absolute top-1.5 left-1.5 flex items-center gap-1 z-10 flex-wrap">
           {channel.quality && (
             <span className="px-1.5 py-0.5 rounded bg-surface-900/90 text-[9px] font-mono font-semibold text-accent border border-surface-700">
               {channel.quality}
@@ -146,11 +155,26 @@ export const ChannelCard: React.FC<ChannelCardProps> = ({
           </Tooltip>
         </div>
 
-        {/* Metadata badges */}
-        <div className="flex items-center justify-between text-[11px] text-surface-400 mt-2 pt-2 border-t border-surface-800/60">
-          <span className="truncate max-w-[100px] text-surface-400 font-medium">
-            {channel.group || 'General'}
-          </span>
+        {/* Provenance & Sport Subcategory & Country tags */}
+        <div className="flex items-center justify-between text-[11px] text-surface-400 mt-2 pt-2 border-t border-surface-800/60 gap-1">
+          <div className="flex items-center gap-1 truncate">
+            {channel.sportType && channel.sportType !== 'all' ? (
+              <span className="px-1.5 py-0.2 rounded bg-accent/10 text-accent font-medium text-[10px] uppercase border border-accent/20">
+                {channel.sportType}
+              </span>
+            ) : (
+              <span className="truncate max-w-[85px] text-surface-400 font-medium">
+                {channel.group || 'General'}
+              </span>
+            )}
+
+            {channel.sourceName && (
+              <span className="px-1 py-0.2 rounded bg-surface-800 text-[9px] text-surface-400 border border-surface-750 shrink-0" title={`Source: ${channel.sourceName}`}>
+                {channel.sourceName.split(' ')[0]}
+              </span>
+            )}
+          </div>
+
           <div className="flex items-center gap-1.5 flex-shrink-0">
             {channel.country && (
               <span className="px-1.5 py-0.2 rounded bg-surface-800 text-[10px] font-mono text-surface-300 border border-surface-750">

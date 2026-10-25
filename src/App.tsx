@@ -16,6 +16,8 @@ import { MobileBottomNav } from './components/layout/MobileBottomNav';
 import { VideoPlayer } from './components/player/VideoPlayer';
 import { LoadingSkeleton } from './components/common/LoadingSkeleton';
 import { EmptyState } from './components/common/EmptyState';
+import { SportsPage } from './pages/SportsPage';
+import { SchedulePage } from './pages/SchedulePage';
 import { HomePage } from './pages/HomePage';
 import { ChannelsPage } from './pages/ChannelsPage';
 import { FavoritesPage } from './pages/FavoritesPage';
@@ -53,8 +55,10 @@ export function App() {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
 
-  // 3. Navigation State
-  const [activeTab, setActiveTab] = useState<UserPreferences['activeTab']>('home');
+  // 3. Navigation State (Sports is default tab!)
+  const [activeTab, setActiveTab] = useState<UserPreferences['activeTab']>(
+    preferences.activeTab || 'sports'
+  );
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
 
@@ -71,6 +75,8 @@ export function App() {
     category: 'all',
     country: 'all',
     language: 'all',
+    sportType: 'all',
+    sourceId: 'all',
     sortBy: 'name-asc',
     viewMode: preferences.viewMode,
     favoritesOnly: false,
@@ -101,13 +107,15 @@ export function App() {
       category: 'all',
       country: 'all',
       language: 'all',
+      sportType: 'all',
+      sourceId: 'all',
       sortBy: 'name-asc',
       favoritesOnly: false,
       recentOnly: false,
     }));
   };
 
-  // 6. Fetching Playlist
+  // 6. Fetching Playlist (Multi-source for Sports, Single source for specific categories)
   const loadPlaylist = useCallback(
     async (playlistId: string, forceRefresh = false) => {
       setIsLoading(true);
@@ -117,9 +125,22 @@ export function App() {
       const playlist = allPlaylists.find((p) => p.id === playlistId) || allPlaylists[0];
 
       try {
-        const result: PlaylistParseResult = await playlistService.fetchPlaylist(playlist.url, {
-          forceRefresh,
-        });
+        let result: PlaylistParseResult;
+
+        if (playlist.id === 'sports') {
+          // Concurrently fetch and merge enabled multi-sources
+          result = await playlistService.fetchMultipleSources(
+            preferences.enabledSourceIds,
+            preferences.customPlaylists,
+            { forceRefresh }
+          );
+        } else {
+          result = await playlistService.fetchPlaylist(playlist.url, {
+            forceRefresh,
+            sourceId: playlist.id,
+            sourceName: playlist.name,
+          });
+        }
 
         setChannels(result.channels);
         setCategories(result.categories);
@@ -132,13 +153,13 @@ export function App() {
         setIsLoading(false);
       }
     },
-    [preferences.customPlaylists]
+    [preferences.customPlaylists, preferences.enabledSourceIds]
   );
 
   // Initial load or when active playlist changes
   useEffect(() => {
     loadPlaylist(preferences.activePlaylistId);
-  }, [preferences.activePlaylistId, loadPlaylist]);
+  }, [preferences.activePlaylistId, preferences.enabledSourceIds, loadPlaylist]);
 
   // Select channel to play
   const handleSelectChannel = useCallback(
@@ -190,14 +211,10 @@ export function App() {
     // Filter by tab / category shortcut
     if (activeTab === 'category' && selectedCategory !== 'all') {
       const targetCat = selectedCategory.toLowerCase();
-      result = result.filter(
-        (c) => c.group.toLowerCase().includes(targetCat)
-      );
+      result = result.filter((c) => c.group.toLowerCase().includes(targetCat));
     } else if (filters.category !== 'all') {
       const targetCat = filters.category.toLowerCase();
-      result = result.filter(
-        (c) => c.group.toLowerCase().includes(targetCat)
-      );
+      result = result.filter((c) => c.group.toLowerCase().includes(targetCat));
     }
 
     // Filter by search query across name, country, language, category
@@ -208,7 +225,8 @@ export function App() {
           c.name.toLowerCase().includes(q) ||
           (c.country && c.country.toLowerCase().includes(q)) ||
           (c.language && c.language.toLowerCase().includes(q)) ||
-          c.group.toLowerCase().includes(q)
+          c.group.toLowerCase().includes(q) ||
+          (c.sportType && c.sportType.toLowerCase().includes(q))
       );
     }
 
@@ -256,6 +274,12 @@ export function App() {
   const featuredChannel = useMemo(() => {
     if (channels.length === 0) return null;
     return (
+      channels.find(
+        (c) =>
+          c.logo &&
+          !c.isGeoBlocked &&
+          (c.group.toLowerCase().includes('sport') || c.sportType)
+      ) ||
       channels.find((c) => c.logo && !c.isGeoBlocked && c.group.toLowerCase().includes('news')) ||
       channels.find((c) => c.logo && !c.isGeoBlocked) ||
       channels.find((c) => c.logo) ||
@@ -265,23 +289,41 @@ export function App() {
 
   // Next / Prev Channel controls
   const handleNextChannel = useCallback(() => {
-    if (!activeChannel || filteredChannels.length === 0) return;
-    const currentIndex = filteredChannels.findIndex((c) => c.id === activeChannel.id);
-    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % filteredChannels.length : 0;
-    handleSelectChannel(filteredChannels[nextIndex]);
-  }, [activeChannel, filteredChannels, handleSelectChannel]);
+    if (!activeChannel || channels.length === 0) return;
+    const currentIndex = channels.findIndex((c) => c.id === activeChannel.id);
+    const nextIndex = currentIndex >= 0 ? (currentIndex + 1) % channels.length : 0;
+    handleSelectChannel(channels[nextIndex]);
+  }, [activeChannel, channels, handleSelectChannel]);
 
   const handlePrevChannel = useCallback(() => {
-    if (!activeChannel || filteredChannels.length === 0) return;
-    const currentIndex = filteredChannels.findIndex((c) => c.id === activeChannel.id);
-    const prevIndex =
-      currentIndex > 0 ? currentIndex - 1 : filteredChannels.length - 1;
-    handleSelectChannel(filteredChannels[prevIndex]);
-  }, [activeChannel, filteredChannels, handleSelectChannel]);
+    if (!activeChannel || channels.length === 0) return;
+    const currentIndex = channels.findIndex((c) => c.id === activeChannel.id);
+    const prevIndex = currentIndex > 0 ? currentIndex - 1 : channels.length - 1;
+    handleSelectChannel(channels[prevIndex]);
+  }, [activeChannel, channels, handleSelectChannel]);
 
   // Playlist switching
   const handleSelectPlaylist = (id: string) => {
     updatePreferences((prev) => ({ ...prev, activePlaylistId: id }));
+  };
+
+  const handleToggleSourceEnabled = (sourceId: string) => {
+    updatePreferences((prev) => {
+      const exists = prev.enabledSourceIds.includes(sourceId);
+      const nextSources = exists
+        ? prev.enabledSourceIds.filter((id) => id !== sourceId)
+        : [...prev.enabledSourceIds, sourceId];
+
+      if (nextSources.length === 0) return prev; // Keep at least one enabled
+      return { ...prev, enabledSourceIds: nextSources };
+    });
+  };
+
+  const handleChangeConnectionTimeout = (seconds: number) => {
+    updatePreferences((prev) => ({
+      ...prev,
+      connectionTimeoutSeconds: seconds,
+    }));
   };
 
   const handleAddCustomPlaylist = (name: string, url: string) => {
@@ -303,7 +345,7 @@ export function App() {
   const handleRemoveCustomPlaylist = (id: string) => {
     updatePreferences((prev) => {
       const remaining = prev.customPlaylists.filter((p) => p.id !== id);
-      const nextActive = prev.activePlaylistId === id ? 'news' : prev.activePlaylistId;
+      const nextActive = prev.activePlaylistId === id ? 'sports' : prev.activePlaylistId;
       return {
         ...prev,
         customPlaylists: remaining,
@@ -334,21 +376,23 @@ export function App() {
     setActiveTab(tab);
 
     // If a channel is actively playing when navigating tabs, dock it to the mini player
-    // so the new tab's channels and catalog are cleanly browsable without taking over the screen
     if (activeChannel) {
       setIsMiniPlayer(true);
     }
 
-    if (tab === 'all' || tab === 'countries' || tab === 'languages') {
+    if (tab === 'sports') {
       setSelectedCategory('all');
-      // Switch to master directory for comprehensive catalog
+      if (preferences.activePlaylistId !== 'sports') {
+        updatePreferences((prev) => ({ ...prev, activePlaylistId: 'sports' }));
+      }
+    } else if (tab === 'all' || tab === 'countries' || tab === 'languages') {
+      setSelectedCategory('all');
       if (preferences.activePlaylistId !== 'master') {
         updatePreferences((prev) => ({ ...prev, activePlaylistId: 'master' }));
       }
     } else if (tab === 'category' && extra?.category) {
       setSelectedCategory(extra.category);
       const catKey = extra.category.toLowerCase();
-      // Automatically switch to the corresponding category playlist if available
       const matched = allAvailablePlaylists.find((p) => p.id === catKey);
       if (matched && preferences.activePlaylistId !== matched.id) {
         updatePreferences((prev) => ({ ...prev, activePlaylistId: matched.id }));
@@ -361,6 +405,10 @@ export function App() {
   // Header Title mapping
   const currentTitle = useMemo(() => {
     switch (activeTab) {
+      case 'sports':
+        return 'Live Sports Center';
+      case 'schedule':
+        return 'Match Schedule & Portals';
       case 'home':
         return 'Home';
       case 'all':
@@ -378,18 +426,17 @@ export function App() {
       case 'settings':
         return 'Settings';
       default:
-        return 'Live TV';
+        return 'Muffin Live TV';
     }
   }, [activeTab, selectedCategory]);
 
-  const allAvailablePlaylists = useMemo(
-    () => playlistService.getAvailablePlaylists(preferences.customPlaylists),
-    [preferences.customPlaylists]
-  );
+  const allAvailablePlaylists = useMemo(() => {
+    return playlistService.getAvailablePlaylists(preferences.customPlaylists);
+  }, [preferences.customPlaylists]);
 
   return (
-    <div className="flex min-h-screen bg-surface-950 text-surface-200">
-      {/* Persistent Left Sidebar */}
+    <div className="flex h-screen bg-surface-950 text-surface-100 overflow-hidden font-sans">
+      {/* Sidebar Navigation */}
       <Sidebar
         activeTab={activeTab}
         selectedCategory={selectedCategory}
@@ -426,7 +473,7 @@ export function App() {
         />
 
         {/* Main Content Area */}
-        <main className="flex-1 p-4 md:p-6 max-w-7xl w-full mx-auto space-y-6 pb-24 md:pb-8">
+        <main className="flex-1 p-4 md:p-6 max-w-7xl w-full mx-auto space-y-6 pb-24 md:pb-8 overflow-y-auto">
           {/* Active Video Player (if a channel is currently chosen) */}
           {activeChannel && (
             <div className={isMiniPlayer ? '' : 'w-full'}>
@@ -437,6 +484,7 @@ export function App() {
                 volume={preferences.volume}
                 isMuted={preferences.isMuted}
                 isFavorite={favoritesSet.has(activeChannel.id)}
+                connectionTimeoutSeconds={preferences.connectionTimeoutSeconds}
                 onVolumeChange={(volume, isMuted) =>
                   updatePreferences((prev) => ({ ...prev, volume, isMuted }))
                 }
@@ -466,6 +514,23 @@ export function App() {
           ) : (
             <>
               {/* Tab Views */}
+              {activeTab === 'sports' && (
+                <SportsPage
+                  channels={channels}
+                  activeChannel={activeChannel}
+                  playbackStatus="playing"
+                  favoritesSet={favoritesSet}
+                  filters={filters}
+                  onFilterChange={handleFilterChange}
+                  onResetFilters={handleResetFilters}
+                  onSelectChannel={handleSelectChannel}
+                  onToggleFavorite={handleToggleFavorite}
+                  onRefreshSources={() => loadPlaylist(preferences.activePlaylistId, true)}
+                />
+              )}
+
+              {activeTab === 'schedule' && <SchedulePage />}
+
               {activeTab === 'home' && (
                 <HomePage
                   channels={filteredChannels}
@@ -521,7 +586,7 @@ export function App() {
                   activeChannelId={activeChannel?.id || null}
                   onSelectChannel={handleSelectChannel}
                   onToggleFavorite={handleToggleFavorite}
-                  onBrowseChannels={() => setActiveTab('all')}
+                  onBrowseChannels={() => setActiveTab('sports')}
                 />
               )}
 
@@ -532,7 +597,7 @@ export function App() {
                   onSelectChannel={handleSelectChannel}
                   onToggleFavorite={handleToggleFavorite}
                   onClearHistory={handleClearHistory}
-                  onBrowseChannels={() => setActiveTab('all')}
+                  onBrowseChannels={() => setActiveTab('sports')}
                 />
               )}
 
@@ -560,7 +625,11 @@ export function App() {
                 <SettingsPage
                   playlists={allAvailablePlaylists}
                   activePlaylistId={preferences.activePlaylistId}
+                  enabledSourceIds={preferences.enabledSourceIds}
+                  connectionTimeoutSeconds={preferences.connectionTimeoutSeconds}
                   onSelectPlaylist={handleSelectPlaylist}
+                  onToggleSourceEnabled={handleToggleSourceEnabled}
+                  onChangeConnectionTimeout={handleChangeConnectionTimeout}
                   onAddCustomPlaylist={handleAddCustomPlaylist}
                   onRemoveCustomPlaylist={handleRemoveCustomPlaylist}
                   onClearHistory={handleClearHistory}

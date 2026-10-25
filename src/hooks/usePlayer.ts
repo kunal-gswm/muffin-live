@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Hls from 'hls.js';
-import type { Channel, PlaybackState } from '../types';
+import type { Channel, PlaybackDiagnostics, PlaybackState } from '../types';
 import { isHlsSupported, canPlayNativeHls, formatPlaybackError } from '../services/playbackService';
 
 interface UsePlayerOptions {
   channel: Channel | null;
   initialVolume?: number;
   initialMuted?: boolean;
+  connectionTimeoutSeconds?: number;
   onVolumeChange?: (volume: number, isMuted: boolean) => void;
 }
 
@@ -14,6 +15,7 @@ export function usePlayer({
   channel,
   initialVolume = 0.8,
   initialMuted = false,
+  connectionTimeoutSeconds = 12,
   onVolumeChange,
 }: UsePlayerOptions) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -22,9 +24,18 @@ export function usePlayer({
   const retryCountRef = useRef<number>(0);
   const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const watchdogTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const loadStartTimeRef = useRef<number>(0);
+
+  const diagnosticsRef = useRef<PlaybackDiagnostics>({
+    timeToFirstFrameMs: null,
+    connectingStartedAt: null,
+    everSucceededInSession: false,
+    hlsFatalError: undefined,
+    networkErrorCode: undefined,
+  });
 
   const [playbackState, setPlaybackState] = useState<PlaybackState>({
-    status: channel ? 'loading' : 'idle',
+    status: channel ? 'connecting' : 'idle',
     error: null,
     volume: initialVolume,
     isMuted: initialMuted,
@@ -32,6 +43,8 @@ export function usePlayer({
     isLive: true,
     currentTime: 0,
     duration: 0,
+    timeToFirstFrameMs: null,
+    everSucceededInSession: false,
   });
 
   // Clean up any existing HLS instance and pending timeouts
@@ -128,7 +141,7 @@ export function usePlayer({
     }
   }, []);
 
-  // Resolves the effective stream URL with HTTPS upgrade if on HTTPS page
+  // Resolves effective stream URL with HTTPS upgrade if on HTTPS page
   const getEffectiveStreamUrl = (rawUrl: string): string => {
     if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
       if (rawUrl.startsWith('http://')) {
@@ -137,6 +150,25 @@ export function usePlayer({
     }
     return rawUrl;
   };
+
+  // Helper to record successful first frame
+  const markPlaybackStarted = useCallback(() => {
+    if (watchdogTimeoutRef.current) {
+      clearTimeout(watchdogTimeoutRef.current);
+      watchdogTimeoutRef.current = null;
+    }
+    const ttf = loadStartTimeRef.current > 0 ? Date.now() - loadStartTimeRef.current : null;
+    diagnosticsRef.current.timeToFirstFrameMs = ttf;
+    diagnosticsRef.current.everSucceededInSession = true;
+
+    setPlaybackState((prev) => ({
+      ...prev,
+      status: 'playing',
+      error: null,
+      timeToFirstFrameMs: ttf,
+      everSucceededInSession: true,
+    }));
+  }, []);
 
   // Load and play the channel stream
   const loadStream = useCallback(() => {
@@ -148,31 +180,38 @@ export function usePlayer({
 
     cleanupHls();
 
+    loadStartTimeRef.current = Date.now();
+    diagnosticsRef.current.connectingStartedAt = loadStartTimeRef.current;
+    diagnosticsRef.current.hlsFatalError = undefined;
+    diagnosticsRef.current.networkErrorCode = undefined;
+
     setPlaybackState((prev) => ({
       ...prev,
-      status: 'loading',
+      status: 'connecting',
       error: null,
       currentTime: 0,
       duration: 0,
+      timeToFirstFrameMs: null,
     }));
 
     video.volume = initialVolume;
     video.muted = initialMuted;
 
     const streamUrl = getEffectiveStreamUrl(channel.url);
+    const timeoutMs = Math.max(6000, Math.min(30000, connectionTimeoutSeconds * 1000));
 
-    // Watchdog timer: If connection hangs for > 7 seconds without video playing or error,
-    // trigger a friendly actionable timeout error instead of infinite spinning!
+    // Watchdog timer: Configurable (default 12s) to prevent false failures on high-latency CDNs
     watchdogTimeoutRef.current = setTimeout(() => {
       setPlaybackState((prev) => {
-        if (prev.status === 'loading') {
+        if (prev.status === 'connecting' || prev.status === 'loading') {
           cleanupHls();
           return {
             ...prev,
             status: 'error',
             error: {
-              message: 'Connection timed out. Broadcast server took too long to respond.',
-              details: 'The stream source may be offline, geo-restricted, or rate-limited.',
+              message: `Connection timed out after ${connectionTimeoutSeconds}s.`,
+              details:
+                'Broadcast server took too long to deliver video segments. Feed may be overloaded or geo-restricted.',
               isCorsOrNetwork: true,
               canRetry: true,
             },
@@ -180,7 +219,7 @@ export function usePlayer({
         }
         return prev;
       });
-    }, 7000);
+    }, timeoutMs);
 
     // Check MSE support with HLS.js
     if (isHlsSupported()) {
@@ -191,9 +230,9 @@ export function usePlayer({
         maxBufferLength: 20,
         maxMaxBufferLength: 90,
         maxBufferSize: 50 * 1000 * 1000,
-        fragLoadingTimeOut: 6000,
-        manifestLoadingTimeOut: 5000,
-        levelLoadingTimeOut: 5000,
+        fragLoadingTimeOut: 8000,
+        manifestLoadingTimeOut: 7000,
+        levelLoadingTimeOut: 7000,
         manifestLoadingMaxRetry: 1,
         levelLoadingMaxRetry: 1,
         fragLoadingMaxRetry: 1,
@@ -216,29 +255,29 @@ export function usePlayer({
         // Attempt playback with audio first
         const playPromise = video.play();
         if (playPromise !== undefined) {
-          playPromise.catch((err) => {
-            // Autoplay blocked by browser policy: try muted autoplay!
-            if (err.name === 'NotAllowedError') {
-              video.muted = true;
-              setPlaybackState((prev) => ({ ...prev, isMuted: true }));
-              const mutedPromise = video.play();
-              if (mutedPromise !== undefined) {
-                mutedPromise
-                  .then(() => {
-                    if (watchdogTimeoutRef.current) {
-                      clearTimeout(watchdogTimeoutRef.current);
-                      watchdogTimeoutRef.current = null;
-                    }
-                    setPlaybackState((prev) => ({ ...prev, status: 'playing' }));
-                  })
-                  .catch(() => {
-                    setPlaybackState((prev) => ({ ...prev, status: 'paused' }));
-                  });
+          playPromise
+            .then(() => {
+              markPlaybackStarted();
+            })
+            .catch((err) => {
+              // Autoplay blocked by browser policy: try muted autoplay!
+              if (err.name === 'NotAllowedError') {
+                video.muted = true;
+                setPlaybackState((prev) => ({ ...prev, isMuted: true }));
+                const mutedPromise = video.play();
+                if (mutedPromise !== undefined) {
+                  mutedPromise
+                    .then(() => {
+                      markPlaybackStarted();
+                    })
+                    .catch(() => {
+                      setPlaybackState((prev) => ({ ...prev, status: 'paused' }));
+                    });
+                }
+              } else {
+                console.warn('Playback error after manifest parsed:', err);
               }
-            } else {
-              console.warn('Playback error after manifest parsed:', err);
-            }
-          });
+            });
         }
       });
 
@@ -246,7 +285,13 @@ export function usePlayer({
         const httpStatus = data.response?.code;
         const isExplicitFatalCode = httpStatus === 403 || httpStatus === 404 || httpStatus === 401;
 
+        if (httpStatus) {
+          diagnosticsRef.current.networkErrorCode = httpStatus;
+        }
+
         if (isExplicitFatalCode || data.fatal) {
+          diagnosticsRef.current.hlsFatalError = data.details;
+
           // Clear watchdog since we have an immediate concrete error
           if (watchdogTimeoutRef.current) {
             clearTimeout(watchdogTimeoutRef.current);
@@ -284,15 +329,24 @@ export function usePlayer({
       video.src = streamUrl;
       const playPromise = video.play();
       if (playPromise !== undefined) {
-        playPromise.catch((err) => {
-          if (err.name === 'NotAllowedError') {
-            video.muted = true;
-            setPlaybackState((prev) => ({ ...prev, isMuted: true }));
-            video.play().catch(() => {
-              setPlaybackState((prev) => ({ ...prev, status: 'paused' }));
-            });
-          }
-        });
+        playPromise
+          .then(() => {
+            markPlaybackStarted();
+          })
+          .catch((err) => {
+            if (err.name === 'NotAllowedError') {
+              video.muted = true;
+              setPlaybackState((prev) => ({ ...prev, isMuted: true }));
+              video
+                .play()
+                .then(() => {
+                  markPlaybackStarted();
+                })
+                .catch(() => {
+                  setPlaybackState((prev) => ({ ...prev, status: 'paused' }));
+                });
+            }
+          });
       }
     } else {
       // MSE not supported
@@ -306,7 +360,7 @@ export function usePlayer({
         },
       }));
     }
-  }, [channel, cleanupHls, initialVolume, initialMuted]);
+  }, [channel, cleanupHls, initialVolume, initialMuted, connectionTimeoutSeconds, markPlaybackStarted]);
 
   // Video element event listeners
   useEffect(() => {
@@ -314,11 +368,7 @@ export function usePlayer({
     if (!video) return;
 
     const onPlay = () => {
-      if (watchdogTimeoutRef.current) {
-        clearTimeout(watchdogTimeoutRef.current);
-        watchdogTimeoutRef.current = null;
-      }
-      setPlaybackState((prev) => ({ ...prev, status: 'playing', error: null }));
+      markPlaybackStarted();
     };
 
     const onPause = () => {
@@ -333,18 +383,14 @@ export function usePlayer({
     const onWaiting = () => {
       setPlaybackState((prev) => {
         if (prev.status === 'playing') {
-          return { ...prev, status: 'loading' };
+          return { ...prev, status: 'buffering' };
         }
         return prev;
       });
     };
 
     const onPlaying = () => {
-      if (watchdogTimeoutRef.current) {
-        clearTimeout(watchdogTimeoutRef.current);
-        watchdogTimeoutRef.current = null;
-      }
-      setPlaybackState((prev) => ({ ...prev, status: 'playing', error: null }));
+      markPlaybackStarted();
     };
 
     const onTimeUpdate = () => {
@@ -400,9 +446,9 @@ export function usePlayer({
       video.removeEventListener('timeupdate', onTimeUpdate);
       video.removeEventListener('error', onError);
     };
-  }, []);
+  }, [markPlaybackStarted]);
 
-  // Listen for fullscreen change
+  // Fullscreen change listener
   useEffect(() => {
     const handleFullscreenChange = () => {
       const isFs = Boolean(document.fullscreenElement);
@@ -434,6 +480,7 @@ export function usePlayer({
     videoRef,
     containerRef,
     playbackState,
+    diagnostics: diagnosticsRef.current,
     togglePlay,
     setVolume,
     toggleMute,

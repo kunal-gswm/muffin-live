@@ -3,6 +3,7 @@ import {
   Home,
   Tv,
   Trophy,
+  Calendar,
   Newspaper,
   Film,
   Clapperboard,
@@ -44,6 +45,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onCloseMobile,
 }) => {
   const navItems = [
+    { id: 'sports' as const, label: 'Live Sports', icon: Trophy, isHighlight: true },
+    { id: 'schedule' as const, label: 'Sports Schedule', icon: Calendar },
     { id: 'home' as const, label: 'Home', icon: Home },
     { id: 'all' as const, label: 'All Channels', icon: Tv },
   ];

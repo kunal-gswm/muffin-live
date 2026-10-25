@@ -18,6 +18,8 @@ import {
   X,
   Radio,
   Tv,
+  Info,
+  Zap,
 } from 'lucide-react';
 import type { Channel } from '../../types';
 import { usePlayer } from '../../hooks/usePlayer';
@@ -29,6 +31,7 @@ interface VideoPlayerProps {
   isMuted: boolean;
   isFavorite: boolean;
   isMiniPlayer?: boolean;
+  connectionTimeoutSeconds?: number;
   onToggleMiniPlayer?: (mini: boolean) => void;
   onVolumeChange: (volume: number, isMuted: boolean) => void;
   onToggleFavorite: (channelId: string) => void;
@@ -44,6 +47,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   isMuted,
   isFavorite,
   isMiniPlayer: externalMini,
+  connectionTimeoutSeconds = 12,
   onToggleMiniPlayer,
   onVolumeChange,
   onToggleFavorite,
@@ -54,6 +58,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [copied, setCopied] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [internalMini, setInternalMini] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isMini = externalMini !== undefined ? externalMini : internalMini;
@@ -69,6 +74,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     videoRef,
     containerRef,
     playbackState,
+    diagnostics,
     togglePlay,
     setVolume,
     toggleMute,
@@ -78,6 +84,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     channel,
     initialVolume: volume,
     initialMuted: isMuted,
+    connectionTimeoutSeconds,
     onVolumeChange,
   });
 
@@ -105,7 +112,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Keyboard accessibility
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger shortcuts if focus is inside an input/textarea
       const tag = (e.target as HTMLElement)?.tagName?.toLowerCase();
       if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
 
@@ -140,142 +146,257 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           e.preventDefault();
           onNextChannel();
           break;
-        case 'Escape':
-          if (!playbackState.isFullscreen) {
-            e.preventDefault();
-            onClose();
-          }
-          break;
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [
-    togglePlay,
-    toggleFullscreen,
-    toggleMute,
-    setVolume,
-    playbackState.volume,
-    playbackState.isFullscreen,
-    onPrevChannel,
-    onNextChannel,
-    onClose,
-  ]);
+  }, [togglePlay, toggleFullscreen, toggleMute, setVolume, onPrevChannel, onNextChannel, playbackState.volume]);
 
   const handleCopyUrl = async () => {
     try {
       await navigator.clipboard.writeText(channel.url);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch (e) {
-      console.warn('Failed to copy stream url:', e);
+    } catch {
+      // Fallback
     }
   };
 
-  const isPipAvailable = typeof document !== 'undefined' && 'pictureInPictureEnabled' in document;
+  const isConnectingOrLoading =
+    playbackState.status === 'loading' || playbackState.status === 'connecting';
+  const isFailedOrError =
+    playbackState.status === 'error' || playbackState.status === 'failed';
+  const isBuffering = playbackState.status === 'buffering';
 
-  const togglePiP = async () => {
-    const video = videoRef.current;
-    if (!video) return;
-    try {
-      if (document.pictureInPictureElement) {
-        await document.exitPictureInPicture();
-      } else if (video.requestPictureInPicture) {
-        await video.requestPictureInPicture();
-      }
-    } catch (err) {
-      console.warn('Picture-in-picture failed:', err);
-    }
-  };
+  // -------------------------------------------------------------
+  // Mini Player Floating View
+  // -------------------------------------------------------------
+  if (isMini) {
+    return (
+      <aside
+        aria-label="Floating mini video player"
+        className="fixed bottom-4 right-4 z-50 w-72 sm:w-80 md:w-96 rounded-xl overflow-hidden shadow-2xl border border-surface-700/80 bg-surface-950 flex flex-col transition-all duration-200"
+      >
+        <div className="relative aspect-video bg-black flex items-center justify-center group overflow-hidden">
+          <video
+            ref={videoRef}
+            className="w-full h-full object-contain"
+            playsInline
+            muted={playbackState.isMuted}
+          />
 
+          {isConnectingOrLoading && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-xs">
+              <div className="w-8 h-8 rounded-full border-2 border-accent/20 border-t-accent animate-spin" />
+            </div>
+          )}
+
+          {isFailedOrError && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface-950/95 p-3 text-center">
+              <AlertCircle className="w-6 h-6 text-red-400 mb-1" />
+              <span className="text-xs text-white font-medium">Stream Offline</span>
+              <button
+                onClick={onNextChannel}
+                className="mt-2 text-[11px] px-2 py-1 rounded bg-accent text-surface-950 font-semibold"
+              >
+                Skip Next
+              </button>
+            </div>
+          )}
+
+          {/* Mini overlay controls */}
+          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-between px-3">
+            <button
+              onClick={onPrevChannel}
+              className="p-1 rounded bg-black/60 text-white hover:bg-black/80"
+              title="Previous channel"
+              aria-label="Previous channel"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button
+              onClick={togglePlay}
+              className="p-2 rounded-full bg-accent text-surface-950 hover:bg-accent-hover"
+              title={playbackState.status === 'playing' ? 'Pause' : 'Play'}
+              aria-label={playbackState.status === 'playing' ? 'Pause' : 'Play'}
+            >
+              {playbackState.status === 'playing' ? (
+                <Pause className="w-4 h-4 fill-current" />
+              ) : (
+                <Play className="w-4 h-4 fill-current ml-0.5" />
+              )}
+            </button>
+            <button
+              onClick={onNextChannel}
+              className="p-1 rounded bg-black/60 text-white hover:bg-black/80"
+              title="Next channel"
+              aria-label="Next channel"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Mini Player Metadata & Action Footer */}
+        <div className="p-2.5 bg-surface-900 flex items-center justify-between gap-2 border-t border-surface-800">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-6 h-6 rounded bg-surface-800 shrink-0 overflow-hidden flex items-center justify-center">
+              {channel.logo ? (
+                <img
+                  src={channel.logo}
+                  alt={channel.name}
+                  className="w-full h-full object-contain"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <Tv className="w-3.5 h-3.5 text-surface-400" />
+              )}
+            </div>
+            <div className="min-w-0">
+              <h4 className="text-xs font-semibold text-white truncate">{channel.name}</h4>
+              <div className="flex items-center gap-1.5 text-[10px] text-surface-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                <span>{channel.sourceName || 'Live'}</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={toggleMute}
+              className="p-1 rounded hover:bg-surface-800 text-surface-400 hover:text-white"
+              title={playbackState.isMuted ? 'Unmute' : 'Mute'}
+              aria-label={playbackState.isMuted ? 'Unmute' : 'Mute'}
+            >
+              {playbackState.isMuted ? <VolumeX className="w-3.5 h-3.5 text-amber-400" /> : <Volume2 className="w-3.5 h-3.5" />}
+            </button>
+            <button
+              onClick={toggleMini}
+              className="p-1 rounded hover:bg-surface-800 text-surface-400 hover:text-white"
+              title="Expand player"
+              aria-label="Expand player"
+            >
+              <Maximize2 className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={onClose}
+              className="p-1 rounded hover:bg-surface-800 text-surface-400 hover:text-white"
+              title="Close player"
+              aria-label="Close player"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      </aside>
+    );
+  }
+
+  // -------------------------------------------------------------
+  // Full Player Standard View
+  // -------------------------------------------------------------
   return (
     <div
       ref={containerRef}
       onMouseMove={handleMouseMove}
-      className={`relative bg-black overflow-hidden shadow-2xl select-none group transition-all duration-200 ${
-        playbackState.isFullscreen
-          ? 'fixed inset-0 z-50 rounded-none border-none w-full h-full'
-          : isMini
-          ? 'fixed bottom-20 md:bottom-6 right-4 sm:right-6 w-80 sm:w-96 max-w-[calc(100vw-2rem)] z-50 rounded-xl border border-surface-700 aspect-video'
-          : 'w-full rounded-xl border border-surface-800 aspect-video max-h-[75vh]'
-      }`}
+      className="relative w-full aspect-video bg-black rounded-xl overflow-hidden shadow-2xl border border-surface-800 group select-none"
     >
-      {/* Video Element */}
       <video
         ref={videoRef}
-        className="w-full h-full object-contain cursor-pointer"
-        onClick={togglePlay}
+        className="w-full h-full object-contain bg-black"
         playsInline
+        muted={playbackState.isMuted}
+        onClick={togglePlay}
       />
 
-      {/* Top Bar (Channel title, return button, fullscreen close) */}
+      {/* Top Header Controls Overlay */}
       <div
-        className={`absolute top-0 inset-x-0 p-4 bg-gradient-to-b from-black/80 via-black/40 to-transparent transition-opacity duration-300 flex items-center justify-between z-30 ${
+        className={`absolute top-0 inset-x-0 p-3 sm:p-4 bg-gradient-to-b from-black/80 via-black/40 to-transparent transition-opacity duration-300 z-30 flex items-center justify-between gap-3 ${
           controlsVisible || playbackState.status !== 'playing' ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}
       >
+        {/* Channel Details */}
         <div className="flex items-center gap-3 min-w-0">
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg bg-surface-900/80 hover:bg-surface-800 text-surface-300 hover:text-white transition-colors border border-surface-700/60"
-            title="Return to browsing channels (Esc)"
-            aria-label="Return to browsing"
-          >
-            <ChevronLeft className="w-5 h-5" />
-          </button>
-
-          <div className="w-8 h-8 rounded bg-surface-900 border border-surface-750 p-0.5 flex items-center justify-center flex-shrink-0">
-            <LogoFallback
-              src={channel.logo}
-              alt={channel.name}
-              fallbackText={channel.name}
-              className="w-full h-full"
-              size="sm"
-            />
+          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-lg bg-surface-900/90 border border-surface-700/60 p-1 shrink-0 overflow-hidden flex items-center justify-center">
+            {channel.logo ? (
+              <img
+                src={channel.logo}
+                alt={channel.name}
+                className="w-full h-full object-contain"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <LogoFallback
+                src={null}
+                alt={channel.name}
+                fallbackText={channel.name}
+                className="w-full h-full text-xs font-bold"
+              />
+            )}
           </div>
 
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h2 className="text-sm font-bold text-white truncate max-w-[200px] sm:max-w-md">
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-sm sm:text-base font-semibold text-white truncate max-w-[200px] sm:max-w-md">
                 {channel.name}
               </h2>
-              {channel.country && (
-                <span className="px-1.5 py-0.2 rounded bg-surface-800/90 text-[10px] font-mono text-surface-300 border border-surface-700">
-                  {channel.country}
+              {channel.quality && (
+                <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-surface-800 text-surface-200 border border-surface-700 rounded">
+                  {channel.quality}
+                </span>
+              )}
+              {channel.sourceName && (
+                <span className="px-1.5 py-0.5 text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded">
+                  {channel.sourceName}
+                </span>
+              )}
+              {channel.sportType && channel.sportType !== 'all' && (
+                <span className="px-1.5 py-0.5 text-[10px] font-medium bg-accent/15 text-accent border border-accent/30 rounded uppercase">
+                  {channel.sportType}
+                </span>
+              )}
+              {diagnostics.timeToFirstFrameMs !== null && (
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] text-surface-400 bg-surface-900/60 rounded" title="Time to first frame">
+                  <Zap className="w-2.5 h-2.5 text-amber-400" />
+                  {(diagnostics.timeToFirstFrameMs / 1000).toFixed(1)}s
                 </span>
               )}
             </div>
-            <p className="text-xs text-surface-400 truncate">{channel.group || 'Live Stream'}</p>
+            <div className="flex items-center gap-2 text-xs text-surface-400 mt-0.5">
+              <span>{channel.country || 'Global'}</span>
+              <span>•</span>
+              <span>{channel.language || 'Multi'}</span>
+              <span>•</span>
+              <span className="text-surface-300">{channel.group}</span>
+            </div>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Muted indicator pill */}
-          {playbackState.isMuted && playbackState.status === 'playing' && (
-            <button
-              onClick={toggleMute}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-accent/20 border border-accent/40 text-accent text-xs font-semibold hover:bg-accent/30 transition-colors animate-pulse"
-              title="Click to unmute stream audio"
-            >
-              <VolumeX className="w-3.5 h-3.5 text-accent" />
-              <span>Unmute</span>
-            </button>
-          )}
+        {/* Right Header Action Icons */}
+        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
+          <button
+            onClick={() => setShowDiagnostics((prev) => !prev)}
+            className={`p-2 rounded-lg transition-colors border ${
+              showDiagnostics
+                ? 'bg-accent/20 text-accent border-accent/40'
+                : 'bg-surface-900/80 text-surface-300 border-surface-700/60 hover:text-white hover:bg-surface-800'
+            }`}
+            title="Stream Diagnostics & Info"
+            aria-label="Stream Diagnostics"
+          >
+            <Info className="w-4 h-4" />
+          </button>
 
-          {/* Minimize / Expand Toggle */}
-          {!playbackState.isFullscreen && (
-            <button
-              onClick={toggleMini}
-              className="p-2 rounded-lg bg-surface-900/80 hover:bg-surface-800 text-surface-300 hover:text-white transition-colors border border-surface-700/60"
-              title={isMini ? 'Expand to main view' : 'Minimize to corner while browsing'}
-              aria-label={isMini ? 'Expand player' : 'Minimize player'}
-            >
-              {isMini ? <Maximize2 className="w-4 h-4 text-accent" /> : <Minimize2 className="w-4 h-4" />}
-            </button>
-          )}
+          <button
+            onClick={toggleMini}
+            className="p-2 rounded-lg bg-surface-900/80 hover:bg-surface-800 text-surface-300 hover:text-white transition-colors border border-surface-700/60"
+            title="Dock to mini player"
+            aria-label="Dock to mini player"
+          >
+            <Minimize2 className="w-4 h-4" />
+          </button>
 
-          {/* Favorite button */}
           <button
             onClick={() => onToggleFavorite(channel.id)}
             className={`p-2 rounded-lg transition-colors border ${
@@ -300,8 +421,64 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       </div>
 
-      {/* Middle State: Loading Spinner */}
-      {playbackState.status === 'loading' && (
+      {/* Diagnostics Modal / Drawer overlay */}
+      {showDiagnostics && (
+        <div className="absolute top-16 right-4 z-40 w-80 p-3.5 rounded-lg bg-surface-950/95 border border-surface-750 backdrop-blur-md shadow-2xl text-xs">
+          <div className="flex items-center justify-between pb-2 mb-2 border-b border-surface-800">
+            <span className="font-semibold text-white flex items-center gap-1.5">
+              <Info className="w-3.5 h-3.5 text-accent" />
+              Stream Diagnostics
+            </span>
+            <button
+              onClick={() => setShowDiagnostics(false)}
+              className="text-surface-400 hover:text-white"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+          <div className="space-y-1.5 text-surface-300">
+            <div className="flex justify-between">
+              <span className="text-surface-400">Status:</span>
+              <span className="text-white font-medium capitalize">{playbackState.status}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-surface-400">Source:</span>
+              <span className="text-white">{channel.sourceName || 'iptv-org'}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-surface-400">Time to First Frame:</span>
+              <span className="text-white">
+                {diagnostics.timeToFirstFrameMs !== null
+                  ? `${diagnostics.timeToFirstFrameMs} ms`
+                  : 'Waiting...'}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-surface-400">Timeout Watchdog:</span>
+              <span className="text-white">{connectionTimeoutSeconds}s</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-surface-400">Session Succeeded:</span>
+              <span className={diagnostics.everSucceededInSession ? 'text-emerald-400' : 'text-surface-400'}>
+                {diagnostics.everSucceededInSession ? 'Yes' : 'No'}
+              </span>
+            </div>
+            {diagnostics.hlsFatalError && (
+              <div className="flex justify-between">
+                <span className="text-surface-400">Fatal HLS Error:</span>
+                <span className="text-red-400">{diagnostics.hlsFatalError}</span>
+              </div>
+            )}
+            <div className="pt-2 border-t border-surface-800 break-all text-[11px] text-surface-400">
+              <span className="font-medium text-surface-300">Stream URL:</span>
+              <p className="mt-0.5 text-surface-400 font-mono select-all">{channel.url}</p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Middle State: Loading / Connecting Spinner */}
+      {isConnectingOrLoading && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/75 backdrop-blur-sm z-20 p-4">
           <div className="relative">
             <div className="w-12 h-12 rounded-full border-2 border-accent/20 border-t-accent animate-spin" />
@@ -329,6 +506,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
+      {/* Middle State: Buffering indicator */}
+      {isBuffering && (
+        <div className="absolute top-16 left-4 z-20 flex items-center gap-2 px-2.5 py-1 rounded bg-black/70 backdrop-blur-xs border border-surface-700 text-xs text-surface-200">
+          <div className="w-3.5 h-3.5 rounded-full border-2 border-accent/20 border-t-accent animate-spin" />
+          <span>Buffering...</span>
+        </div>
+      )}
+
       {/* Middle State: Autoplay blocked / Paused overlay */}
       {playbackState.status === 'paused' && (
         <div
@@ -342,7 +527,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       )}
 
       {/* Middle State: Error Overlay */}
-      {playbackState.status === 'error' && (
+      {isFailedOrError && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface-950/95 p-6 z-20 text-center">
           <div className="p-3 mb-3 rounded-full bg-red-500/10 border border-red-500/20 text-red-400">
             <AlertCircle className="w-8 h-8" />
@@ -426,18 +611,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               <ChevronRight className="w-4 h-4" />
             </button>
 
-            {/* Live Indicator based on actual playback state */}
-            {playbackState.status === 'playing' && (
-              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-emerald-500/20 border border-emerald-500/30 text-emerald-400 text-[10px] font-bold tracking-wider uppercase ml-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                <span>Live</span>
+            {playbackState.isLive && (
+              <div className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-red-500/10 border border-red-500/20 text-[11px] font-semibold text-red-400 ml-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                <span>LIVE</span>
               </div>
             )}
           </div>
 
-          {/* Right Controls: Volume slider, PiP, Fullscreen */}
+          {/* Right Controls: Volume, Fullscreen */}
           <div className="flex items-center gap-3">
-            {/* Volume control */}
+            {/* Volume slider */}
             <div className="flex items-center gap-1.5 group/volume">
               <button
                 onClick={toggleMute}
@@ -445,13 +629,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 title={playbackState.isMuted ? 'Unmute (M)' : 'Mute (M)'}
                 aria-label="Mute toggle"
               >
-                {playbackState.isMuted || playbackState.volume === 0 ? (
-                  <VolumeX className="w-4 h-4 text-red-400" />
+                {playbackState.isMuted ? (
+                  <VolumeX className="w-4 h-4 text-amber-400" />
                 ) : (
                   <Volume2 className="w-4 h-4" />
                 )}
               </button>
-
               <input
                 type="range"
                 min="0"
@@ -459,29 +642,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 step="0.05"
                 value={playbackState.isMuted ? 0 : playbackState.volume}
                 onChange={(e) => setVolume(parseFloat(e.target.value))}
-                className="w-16 sm:w-20 h-1 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-accent"
+                className="w-16 sm:w-20 h-1 bg-surface-700 rounded-lg appearance-none cursor-pointer accent-accent opacity-70 group-hover/volume:opacity-100 transition-opacity"
+                title="Volume control"
                 aria-label="Volume slider"
               />
             </div>
 
-            {/* Picture in picture */}
-            {isPipAvailable && (
-              <button
-                onClick={togglePiP}
-                className="p-1.5 rounded text-surface-300 hover:text-white hover:bg-white/10 transition-colors hidden sm:block"
-                title="Picture-in-Picture"
-                aria-label="Picture-in-Picture"
-              >
-                <Tv className="w-4 h-4" />
-              </button>
-            )}
-
-            {/* Fullscreen */}
             <button
               onClick={toggleFullscreen}
               className="p-1.5 rounded text-surface-300 hover:text-white hover:bg-white/10 transition-colors"
-              title="Fullscreen (F)"
-              aria-label="Fullscreen toggle"
+              title="Toggle fullscreen (F)"
+              aria-label="Toggle fullscreen"
             >
               {playbackState.isFullscreen ? (
                 <Minimize className="w-4 h-4" />
