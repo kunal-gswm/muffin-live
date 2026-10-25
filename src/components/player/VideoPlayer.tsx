@@ -346,7 +346,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   {channel.quality}
                 </span>
               )}
-              {channel.sourceName && (
+              {channel.isFallback && (
+                <span
+                  className="px-1.5 py-0.5 text-[10px] font-medium bg-amber-500/15 text-amber-300 border border-amber-500/30 rounded"
+                  title="Configured fallback stream (unverified live status)"
+                >
+                  Fallback Feed
+                </span>
+              )}
+              {channel.sourceName && !channel.isFallback && (
                 <span className="px-1.5 py-0.5 text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded">
                   {channel.sourceName}
                 </span>
@@ -442,15 +450,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               <span className="text-white font-medium capitalize">{playbackState.status}</span>
             </div>
             <div className="flex justify-between">
+              <span className="text-surface-400">Feed Type:</span>
+              <span className={channel.isFallback ? 'text-amber-400' : 'text-white'}>
+                {channel.isFallback ? 'Configured Fallback' : 'Live Directory'}
+              </span>
+            </div>
+            <div className="flex justify-between">
               <span className="text-surface-400">Source:</span>
               <span className="text-white">{channel.sourceName || 'iptv-org'}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-surface-400">Time to First Frame:</span>
+              <span className="text-surface-400">First Playable Frame:</span>
               <span className="text-white">
                 {diagnostics.timeToFirstFrameMs !== null
-                  ? `${diagnostics.timeToFirstFrameMs} ms`
-                  : 'Waiting...'}
+                  ? `${diagnostics.timeToFirstFrameMs} ms (Confirmed)`
+                  : playbackState.status === 'playing'
+                  ? 'Rendering'
+                  : 'Pending'}
               </span>
             </div>
             <div className="flex justify-between">
@@ -458,15 +474,35 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               <span className="text-white">{connectionTimeoutSeconds}s</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-surface-400">Session Succeeded:</span>
+              <span className="text-surface-400">Confirmed in Session:</span>
               <span className={diagnostics.everSucceededInSession ? 'text-emerald-400' : 'text-surface-400'}>
-                {diagnostics.everSucceededInSession ? 'Yes' : 'No'}
+                {diagnostics.everSucceededInSession ? 'Yes (Played)' : 'No'}
               </span>
             </div>
+            {diagnostics.networkErrorCode !== undefined && (
+              <div className="flex justify-between">
+                <span className="text-surface-400">HTTP Status:</span>
+                <span className={diagnostics.networkErrorCode === 403 ? 'text-amber-400' : 'text-red-400'}>
+                  HTTP {diagnostics.networkErrorCode} {diagnostics.isAuthRestricted ? '(Restricted)' : ''}
+                </span>
+              </div>
+            )}
+            {diagnostics.autoplayBlocked && (
+              <div className="flex justify-between">
+                <span className="text-surface-400">Autoplay Policy:</span>
+                <span className="text-amber-400">Muted (Browser Restricted)</span>
+              </div>
+            )}
+            {diagnostics.unsupportedCodec && (
+              <div className="flex justify-between">
+                <span className="text-surface-400">Codec Status:</span>
+                <span className="text-red-400">Unsupported Codec</span>
+              </div>
+            )}
             {diagnostics.hlsFatalError && (
               <div className="flex justify-between">
-                <span className="text-surface-400">Fatal HLS Error:</span>
-                <span className="text-red-400">{diagnostics.hlsFatalError}</span>
+                <span className="text-surface-400">HLS Event:</span>
+                <span className="text-red-400 truncate max-w-[150px]">{diagnostics.hlsFatalError}</span>
               </div>
             )}
             <div className="pt-2 border-t border-surface-800 break-all text-[11px] text-surface-400">

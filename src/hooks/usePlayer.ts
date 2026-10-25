@@ -25,6 +25,8 @@ export function usePlayer({
   const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const watchdogTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadStartTimeRef = useRef<number>(0);
+  const isCancelledRef = useRef<boolean>(false);
+  const removeListenersRef = useRef<(() => void) | null>(null);
 
   const diagnosticsRef = useRef<PlaybackDiagnostics>({
     timeToFirstFrameMs: null,
@@ -32,10 +34,14 @@ export function usePlayer({
     everSucceededInSession: false,
     hlsFatalError: undefined,
     networkErrorCode: undefined,
+    unsupportedCodec: false,
+    autoplayBlocked: false,
+    isCorsError: false,
+    isAuthRestricted: false,
   });
 
   const [playbackState, setPlaybackState] = useState<PlaybackState>({
-    status: channel ? 'connecting' : 'idle',
+    status: channel ? 'connecting' : 'untested',
     error: null,
     volume: initialVolume,
     isMuted: initialMuted,
@@ -47,7 +53,7 @@ export function usePlayer({
     everSucceededInSession: false,
   });
 
-  // Clean up any existing HLS instance and pending timeouts
+  // Clean up any existing HLS instance, watchdog timers, listeners, and pending retries
   const cleanupHls = useCallback(() => {
     if (watchdogTimeoutRef.current) {
       clearTimeout(watchdogTimeoutRef.current);
@@ -57,6 +63,11 @@ export function usePlayer({
     if (retryTimeoutRef.current) {
       clearTimeout(retryTimeoutRef.current);
       retryTimeoutRef.current = null;
+    }
+
+    if (removeListenersRef.current) {
+      removeListenersRef.current();
+      removeListenersRef.current = null;
     }
 
     if (hlsRef.current) {
@@ -111,6 +122,7 @@ export function usePlayer({
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
           console.warn('Play prevented:', err);
+          diagnosticsRef.current.autoplayBlocked = true;
           setPlaybackState((prev) => ({ ...prev, status: 'paused' }));
         });
       }
@@ -151,39 +163,155 @@ export function usePlayer({
     return rawUrl;
   };
 
-  // Helper to record successful first frame
-  const markPlaybackStarted = useCallback(() => {
-    if (watchdogTimeoutRef.current) {
-      clearTimeout(watchdogTimeoutRef.current);
-      watchdogTimeoutRef.current = null;
-    }
-    const ttf = loadStartTimeRef.current > 0 ? Date.now() - loadStartTimeRef.current : null;
-    diagnosticsRef.current.timeToFirstFrameMs = ttf;
-    diagnosticsRef.current.everSucceededInSession = true;
+  /**
+   * Only marks playback as confirmed after the media element reaches ready state
+   * and actually advances media playback time or renders media frames.
+   */
+  const verifyActualPlayback = useCallback(() => {
+    if (isCancelledRef.current) return;
+    const video = videoRef.current;
+    if (!video) return;
 
-    setPlaybackState((prev) => ({
-      ...prev,
-      status: 'playing',
-      error: null,
-      timeToFirstFrameMs: ttf,
-      everSucceededInSession: true,
-    }));
+    // Strict verification: media has advanced or loaded enough frames
+    const hasAdvancedTime = video.currentTime > 0;
+    const hasRenderedFrame = video.readyState >= 2 && (video.videoWidth > 0 || video.duration > 0);
+
+    if (hasAdvancedTime || hasRenderedFrame) {
+      if (watchdogTimeoutRef.current) {
+        clearTimeout(watchdogTimeoutRef.current);
+        watchdogTimeoutRef.current = null;
+      }
+
+      if (!diagnosticsRef.current.everSucceededInSession) {
+        const ttf = loadStartTimeRef.current > 0 ? Date.now() - loadStartTimeRef.current : null;
+        diagnosticsRef.current.timeToFirstFrameMs = ttf;
+        diagnosticsRef.current.everSucceededInSession = true;
+
+        setPlaybackState((prev) => ({
+          ...prev,
+          status: 'playing',
+          error: null,
+          timeToFirstFrameMs: ttf,
+          everSucceededInSession: true,
+        }));
+      } else {
+        setPlaybackState((prev) => ({
+          ...prev,
+          status: 'playing',
+          error: null,
+        }));
+      }
+    }
   }, []);
+
+  const attachVideoListeners = useCallback(
+    (video: HTMLVideoElement) => {
+      if (removeListenersRef.current) {
+        removeListenersRef.current();
+        removeListenersRef.current = null;
+      }
+
+      const onPlay = () => {
+        verifyActualPlayback();
+      };
+
+      const onPause = () => {
+        setPlaybackState((prev) => (prev.status === 'playing' ? { ...prev, status: 'paused' } : prev));
+      };
+
+      const onWaiting = () => {
+        setPlaybackState((prev) => (prev.status === 'playing' ? { ...prev, status: 'buffering' } : prev));
+      };
+
+      const onLoadedData = () => {
+        verifyActualPlayback();
+      };
+
+      const onPlaying = () => {
+        verifyActualPlayback();
+      };
+
+      const onTimeUpdate = () => {
+        if (video.currentTime > 0) {
+          verifyActualPlayback();
+        }
+        setPlaybackState((prev) => ({
+          ...prev,
+          currentTime: video.currentTime,
+          duration: isNaN(video.duration) ? 0 : video.duration,
+        }));
+      };
+
+      const onError = () => {
+        if (hlsRef.current) return;
+        const mediaError = video.error;
+        let details = 'Unknown video error';
+        if (mediaError) {
+          switch (mediaError.code) {
+            case 1:
+              details = 'MEDIA_ERR_ABORTED';
+              break;
+            case 2:
+              details = 'MEDIA_ERR_NETWORK';
+              break;
+            case 3:
+              details = 'MEDIA_ERR_DECODE';
+              diagnosticsRef.current.unsupportedCodec = true;
+              break;
+            case 4:
+              details = 'MEDIA_ERR_SRC_NOT_SUPPORTED';
+              diagnosticsRef.current.unsupportedCodec = true;
+              break;
+          }
+        }
+        setPlaybackState((prev) => ({
+          ...prev,
+          status: 'error',
+          error: formatPlaybackError('mediaElementError', details),
+        }));
+      };
+
+      video.addEventListener('play', onPlay);
+      video.addEventListener('pause', onPause);
+      video.addEventListener('waiting', onWaiting);
+      video.addEventListener('playing', onPlaying);
+      video.addEventListener('loadeddata', onLoadedData);
+      video.addEventListener('timeupdate', onTimeUpdate);
+      video.addEventListener('error', onError);
+
+      removeListenersRef.current = () => {
+        video.removeEventListener('play', onPlay);
+        video.removeEventListener('pause', onPause);
+        video.removeEventListener('waiting', onWaiting);
+        video.removeEventListener('playing', onPlaying);
+        video.removeEventListener('loadeddata', onLoadedData);
+        video.removeEventListener('timeupdate', onTimeUpdate);
+        video.removeEventListener('error', onError);
+      };
+    },
+    [verifyActualPlayback]
+  );
 
   // Load and play the channel stream
   const loadStream = useCallback(() => {
+    isCancelledRef.current = false;
     const video = videoRef.current;
     if (!video || !channel) {
-      setPlaybackState((prev) => ({ ...prev, status: 'idle', error: null }));
+      setPlaybackState((prev) => ({ ...prev, status: 'untested', error: null }));
       return;
     }
 
     cleanupHls();
+    attachVideoListeners(video);
 
     loadStartTimeRef.current = Date.now();
     diagnosticsRef.current.connectingStartedAt = loadStartTimeRef.current;
     diagnosticsRef.current.hlsFatalError = undefined;
     diagnosticsRef.current.networkErrorCode = undefined;
+    diagnosticsRef.current.unsupportedCodec = false;
+    diagnosticsRef.current.autoplayBlocked = false;
+    diagnosticsRef.current.isCorsError = false;
+    diagnosticsRef.current.isAuthRestricted = false;
 
     setPlaybackState((prev) => ({
       ...prev,
@@ -200,21 +328,19 @@ export function usePlayer({
     const streamUrl = getEffectiveStreamUrl(channel.url);
     const timeoutMs = Math.max(6000, Math.min(30000, connectionTimeoutSeconds * 1000));
 
-    // Watchdog timer: Configurable (default 12s) to prevent false failures on high-latency CDNs
+    // Watchdog timer: Configurable to prevent false timeouts on slower international CDNs
     watchdogTimeoutRef.current = setTimeout(() => {
       setPlaybackState((prev) => {
-        if (prev.status === 'connecting' || prev.status === 'loading') {
+        if (prev.status === 'connecting' || prev.status === 'buffering' || prev.status === 'loading') {
           cleanupHls();
+          const errorInfo = formatPlaybackError(
+            'timeout',
+            `Connection timed out after ${connectionTimeoutSeconds}s waiting for media frames.`
+          );
           return {
             ...prev,
             status: 'error',
-            error: {
-              message: `Connection timed out after ${connectionTimeoutSeconds}s.`,
-              details:
-                'Broadcast server took too long to deliver video segments. Feed may be overloaded or geo-restricted.',
-              isCorsOrNetwork: true,
-              canRetry: true,
-            },
+            error: errorInfo,
           };
         }
         return prev;
@@ -230,9 +356,9 @@ export function usePlayer({
         maxBufferLength: 20,
         maxMaxBufferLength: 90,
         maxBufferSize: 50 * 1000 * 1000,
-        fragLoadingTimeOut: 8000,
-        manifestLoadingTimeOut: 7000,
-        levelLoadingTimeOut: 7000,
+        fragLoadingTimeOut: 10000,
+        manifestLoadingTimeOut: 8000,
+        levelLoadingTimeOut: 8000,
         manifestLoadingMaxRetry: 1,
         levelLoadingMaxRetry: 1,
         fragLoadingMaxRetry: 1,
@@ -248,27 +374,33 @@ export function usePlayer({
         hls.loadSource(streamUrl);
       });
 
+      hls.on(Hls.Events.FRAG_LOADED, () => {
+        // Active data packets received: stream is making progress
+        setPlaybackState((prev) => (prev.status === 'connecting' ? { ...prev, status: 'buffering' } : prev));
+      });
+
       hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
         const isLive = data.levels.some((lvl) => lvl.details?.live ?? true);
         setPlaybackState((prev) => ({ ...prev, isLive }));
 
-        // Attempt playback with audio first
+        // Attempt playback with audio
         const playPromise = video.play();
         if (playPromise !== undefined) {
           playPromise
             .then(() => {
-              markPlaybackStarted();
+              // Wait for actual readyState and media time advancement in event listeners
+              verifyActualPlayback();
             })
             .catch((err) => {
-              // Autoplay blocked by browser policy: try muted autoplay!
               if (err.name === 'NotAllowedError') {
+                diagnosticsRef.current.autoplayBlocked = true;
                 video.muted = true;
                 setPlaybackState((prev) => ({ ...prev, isMuted: true }));
                 const mutedPromise = video.play();
                 if (mutedPromise !== undefined) {
                   mutedPromise
                     .then(() => {
-                      markPlaybackStarted();
+                      verifyActualPlayback();
                     })
                     .catch(() => {
                       setPlaybackState((prev) => ({ ...prev, status: 'paused' }));
@@ -287,12 +419,14 @@ export function usePlayer({
 
         if (httpStatus) {
           diagnosticsRef.current.networkErrorCode = httpStatus;
+          if (httpStatus === 403) diagnosticsRef.current.isAuthRestricted = true;
+          if (httpStatus === 0) diagnosticsRef.current.isCorsError = true;
         }
 
         if (isExplicitFatalCode || data.fatal) {
           diagnosticsRef.current.hlsFatalError = data.details;
 
-          // Clear watchdog since we have an immediate concrete error
+          // Clear watchdog on confirmed error
           if (watchdogTimeoutRef.current) {
             clearTimeout(watchdogTimeoutRef.current);
             watchdogTimeoutRef.current = null;
@@ -325,22 +459,23 @@ export function usePlayer({
         }
       });
     } else if (canPlayNativeHls(video)) {
-      // Native Safari HLS
+      // Native Apple Safari HLS
       video.src = streamUrl;
       const playPromise = video.play();
       if (playPromise !== undefined) {
         playPromise
           .then(() => {
-            markPlaybackStarted();
+            verifyActualPlayback();
           })
           .catch((err) => {
             if (err.name === 'NotAllowedError') {
+              diagnosticsRef.current.autoplayBlocked = true;
               video.muted = true;
               setPlaybackState((prev) => ({ ...prev, isMuted: true }));
               video
                 .play()
                 .then(() => {
-                  markPlaybackStarted();
+                  verifyActualPlayback();
                 })
                 .catch(() => {
                   setPlaybackState((prev) => ({ ...prev, status: 'paused' }));
@@ -349,104 +484,34 @@ export function usePlayer({
           });
       }
     } else {
-      // MSE not supported
+      // Media Source Extensions unsupported
+      diagnosticsRef.current.unsupportedCodec = true;
       setPlaybackState((prev) => ({
         ...prev,
         status: 'error',
         error: {
           message: 'Your browser does not support HLS streaming video.',
           details: 'Media Source Extensions (MSE) unsupported',
+          unsupportedCodec: true,
           canRetry: false,
         },
       }));
     }
-  }, [channel, cleanupHls, initialVolume, initialMuted, connectionTimeoutSeconds, markPlaybackStarted]);
+  }, [channel, cleanupHls, initialVolume, initialMuted, connectionTimeoutSeconds, verifyActualPlayback, attachVideoListeners]);
 
-  // Video element event listeners
+  // Video element event listeners effect for cases where videoRef mounts or unmounts
   useEffect(() => {
     const video = videoRef.current;
-    if (!video) return;
-
-    const onPlay = () => {
-      markPlaybackStarted();
-    };
-
-    const onPause = () => {
-      setPlaybackState((prev) => {
-        if (prev.status === 'playing') {
-          return { ...prev, status: 'paused' };
-        }
-        return prev;
-      });
-    };
-
-    const onWaiting = () => {
-      setPlaybackState((prev) => {
-        if (prev.status === 'playing') {
-          return { ...prev, status: 'buffering' };
-        }
-        return prev;
-      });
-    };
-
-    const onPlaying = () => {
-      markPlaybackStarted();
-    };
-
-    const onTimeUpdate = () => {
-      setPlaybackState((prev) => ({
-        ...prev,
-        currentTime: video.currentTime,
-        duration: isNaN(video.duration) ? 0 : video.duration,
-      }));
-    };
-
-    // Native video error listener — only trigger error if Hls is NOT active
-    const onError = () => {
-      if (hlsRef.current) {
-        return;
-      }
-      const mediaError = video.error;
-      let details = 'Unknown video error';
-      if (mediaError) {
-        switch (mediaError.code) {
-          case 1:
-            details = 'MEDIA_ERR_ABORTED';
-            break;
-          case 2:
-            details = 'MEDIA_ERR_NETWORK';
-            break;
-          case 3:
-            details = 'MEDIA_ERR_DECODE';
-            break;
-          case 4:
-            details = 'MEDIA_ERR_SRC_NOT_SUPPORTED';
-            break;
-        }
-      }
-      setPlaybackState((prev) => ({
-        ...prev,
-        status: 'error',
-        error: formatPlaybackError('mediaElementError', details),
-      }));
-    };
-
-    video.addEventListener('play', onPlay);
-    video.addEventListener('pause', onPause);
-    video.addEventListener('waiting', onWaiting);
-    video.addEventListener('playing', onPlaying);
-    video.addEventListener('timeupdate', onTimeUpdate);
-    video.addEventListener('error', onError);
-
+    if (video) {
+      attachVideoListeners(video);
+    }
     return () => {
-      video.removeEventListener('play', onPlay);
-      video.removeEventListener('pause', onPause);
-      video.removeEventListener('waiting', onWaiting);
-      video.removeEventListener('playing', onPlaying);
-      video.removeEventListener('timeupdate', onTimeUpdate);
-      video.removeEventListener('error', onError);
+      if (removeListenersRef.current) {
+        removeListenersRef.current();
+        removeListenersRef.current = null;
+      }
     };
-  }, [markPlaybackStarted]);
+  }, [attachVideoListeners]);
 
   // Fullscreen change listener
   useEffect(() => {
@@ -467,6 +532,7 @@ export function usePlayer({
     loadStream();
 
     return () => {
+      isCancelledRef.current = true;
       cleanupHls();
     };
   }, [channel, loadStream, cleanupHls]);

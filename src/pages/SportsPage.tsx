@@ -6,6 +6,7 @@ import {
   List,
   RefreshCw,
   Globe,
+  AlertTriangle,
 } from 'lucide-react';
 import type { Channel, FilterState, PlaybackStatus, SportType } from '../types';
 import { ChannelCard } from '../components/channels/ChannelCard';
@@ -18,6 +19,7 @@ interface SportsPageProps {
   playbackStatus?: PlaybackStatus;
   favoritesSet: Set<string>;
   filters: FilterState;
+  isFallback?: boolean;
   onFilterChange: (filters: Partial<FilterState>) => void;
   onResetFilters: () => void;
   onSelectChannel: (channel: Channel) => void;
@@ -31,6 +33,7 @@ export const SportsPage: React.FC<SportsPageProps> = ({
   playbackStatus,
   favoritesSet,
   filters,
+  isFallback = false,
   onFilterChange,
   onResetFilters,
   onSelectChannel,
@@ -188,6 +191,19 @@ export const SportsPage: React.FC<SportsPageProps> = ({
           )}
         </div>
       </div>
+
+      {/* Fallback Warning Notice */}
+      {isFallback && (
+        <div className="p-3.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-start gap-3 text-xs text-amber-200">
+          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+          <div className="space-y-0.5">
+            <span className="font-semibold text-amber-300">Offline Fallback Mode Active</span>
+            <p className="text-amber-200/80 leading-relaxed">
+              External playlist directories from GitHub were unreachable. Displaying configured public fallback streams (live status unverified). Click <strong>Refresh Sources</strong> to retry downloading the live directories.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Sport Subcategory Navigation Pills */}
       <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import type {
   Channel,
   FilterState,
@@ -54,6 +54,8 @@ export function App() {
   const [languages, setLanguages] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [isFallback, setIsFallback] = useState<boolean>(false);
+  const playlistRequestIdRef = useRef<number>(0);
 
   // 3. Navigation State (Sports is default tab!)
   const [activeTab, setActiveTab] = useState<UserPreferences['activeTab']>(
@@ -121,6 +123,7 @@ export function App() {
   // 6. Fetching Playlist (Multi-source for Sports, Single source for specific categories)
   const loadPlaylist = useCallback(
     async (playlistId: string, forceRefresh = false, signal?: AbortSignal) => {
+      const currentRequestId = ++playlistRequestIdRef.current;
       setIsLoading(true);
       setFetchError(null);
 
@@ -146,20 +149,26 @@ export function App() {
           });
         }
 
-        if (signal?.aborted) return;
+        if (signal?.aborted || currentRequestId !== playlistRequestIdRef.current) return;
 
         setChannels(result.channels);
         setCategories(result.categories);
         setCountries(result.countries);
         setLanguages(result.languages);
+        setIsFallback(Boolean(result.isFallback));
       } catch (err: unknown) {
-        if (signal?.aborted || (err instanceof Error && err.message.includes('cancelled'))) {
+        if (
+          signal?.aborted ||
+          currentRequestId !== playlistRequestIdRef.current ||
+          (err instanceof Error && err.message.includes('cancelled'))
+        ) {
           return; // Ignore normal cancellation on navigation or remount
         }
         const message = err instanceof Error ? err.message : 'Failed to fetch playlist.';
         setFetchError(message);
+        setIsFallback(false);
       } finally {
-        if (!signal?.aborted) {
+        if (!signal?.aborted && currentRequestId === playlistRequestIdRef.current) {
           setIsLoading(false);
         }
       }
@@ -538,6 +547,7 @@ export function App() {
                   playbackStatus="playing"
                   favoritesSet={favoritesSet}
                   filters={filters}
+                  isFallback={isFallback}
                   onFilterChange={handleFilterChange}
                   onResetFilters={handleResetFilters}
                   onSelectChannel={handleSelectChannel}

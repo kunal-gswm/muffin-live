@@ -22,7 +22,9 @@ export interface Channel {
   sources?: string[];
   sportType?: SportType;
   isInferredSport?: boolean;
+  isFallback?: boolean;
   observedHealth?: 'working' | 'failing' | 'unknown';
+  hasConfirmedPlayback?: boolean;
   timeToFirstFrameMs?: number;
 }
 
@@ -38,6 +40,7 @@ export interface PlaylistSource {
 }
 
 export type PlaybackStatus =
+  | 'untested'
   | 'idle'
   | 'loading'
   | 'connecting'
@@ -56,6 +59,8 @@ export interface PlaybackError {
   isCorsOrNetwork?: boolean;
   canRetry?: boolean;
   httpStatus?: number;
+  isAuthRestricted?: boolean;
+  unsupportedCodec?: boolean;
 }
 
 export interface PlaybackDiagnostics {
@@ -65,6 +70,10 @@ export interface PlaybackDiagnostics {
   hlsFatalError?: string;
   networkErrorCode?: number;
   observedLatencyMs?: number;
+  unsupportedCodec?: boolean;
+  autoplayBlocked?: boolean;
+  isCorsError?: boolean;
+  isAuthRestricted?: boolean;
 }
 
 export interface PlaybackState {
@@ -139,6 +148,7 @@ export interface PlaylistParseResult {
   errorsCount: number;
   sourceId?: string;
   sourceName?: string;
+  isFallback?: boolean;
 }
 
 export interface SourceQualityStats {
@@ -151,24 +161,25 @@ export interface SourceQualityStats {
   duplicatePercentage: number;
   countriesCount: number;
   languagesCount: number;
-  testedCount: number;
-  workingCount: number;
-  failingCount: number;
+  httpProbedCount: number;
+  httpOkCount: number;
+  browserTestCount: number;
+  confirmedPlaybackCount: number;
+  failedTestCount: number;
+  inconclusiveCount: number;
   avgTimeToFirstFrameMs: number | null;
 }
 
-export interface MatchFixture {
+export interface CompetitionDirectoryItem {
   id: string;
   sport: SportType;
   competition: string;
-  homeTeam: string;
-  awayTeam: string;
-  startTime: string; // ISO string
-  status: 'upcoming' | 'live' | 'finished';
-  officialBroadcasters: {
+  organizer: string;
+  officialScheduleUrl: string;
+  description: string;
+  verifiedBroadcasters: {
     region: string;
     broadcaster: string;
     officialUrl: string;
   }[];
-  associatedChannelIds?: string[];
 }

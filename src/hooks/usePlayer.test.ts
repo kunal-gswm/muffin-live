@@ -41,7 +41,7 @@ describe('usePlayer hook', () => {
       })
     );
 
-    expect(result.current.playbackState.status).toBe('idle');
+    expect(result.current.playbackState.status).toBe('untested');
     expect(result.current.playbackState.volume).toBe(0.7);
     expect(result.current.playbackState.isMuted).toBe(false);
   });
@@ -152,5 +152,36 @@ describe('usePlayer hook', () => {
 
     expect(result.current.diagnostics).toBeDefined();
     expect(result.current.diagnostics.everSucceededInSession).toBe(false);
+  });
+
+  it('marks playback as confirmed only when media advances currentTime or renders frame', () => {
+    const { result } = renderHook(() =>
+      usePlayer({
+        channel: mockChannel,
+      })
+    );
+
+    const mockVideo = document.createElement('video');
+    result.current.videoRef.current = mockVideo;
+
+    // Initially connecting
+    act(() => {
+      result.current.retry();
+    });
+    expect(result.current.playbackState.status).toBe('connecting');
+    expect(result.current.playbackState.everSucceededInSession).toBeFalsy();
+
+    // Trigger timeupdate with currentTime > 0
+    Object.defineProperty(mockVideo, 'currentTime', { value: 1.2, configurable: true });
+    Object.defineProperty(mockVideo, 'readyState', { value: 3, configurable: true });
+    Object.defineProperty(mockVideo, 'videoWidth', { value: 1280, configurable: true });
+
+    act(() => {
+      mockVideo.dispatchEvent(new Event('timeupdate'));
+    });
+
+    expect(result.current.playbackState.status).toBe('playing');
+    expect(result.current.playbackState.everSucceededInSession).toBe(true);
+    expect(result.current.diagnostics.everSucceededInSession).toBe(true);
   });
 });

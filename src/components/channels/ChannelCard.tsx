@@ -168,11 +168,15 @@ export const ChannelCard: React.FC<ChannelCardProps> = ({
               </span>
             )}
 
-            {channel.sourceName && (
+            {channel.isFallback ? (
+              <span className="px-1 py-0.2 rounded bg-amber-500/10 text-[9px] text-amber-400 border border-amber-500/20 shrink-0" title="Configured fallback feed">
+                Fallback
+              </span>
+            ) : channel.sourceName ? (
               <span className="px-1 py-0.2 rounded bg-surface-800 text-[9px] text-surface-400 border border-surface-750 shrink-0" title={`Source: ${channel.sourceName}`}>
                 {channel.sourceName.split(' ')[0]}
               </span>
-            )}
+            ) : null}
           </div>
 
           <div className="flex items-center gap-1.5 flex-shrink-0">

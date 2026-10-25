@@ -117,4 +117,15 @@ https://stream.ok.com/feed.m3u8
       playlistService.fetchPlaylist('https://example.com/test.m3u', { signal: controller.signal })
     ).rejects.toThrow('Playlist download cancelled.');
   });
+
+  it('activates honest fallback channels with isFallback: true when all sources fail', async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('Network offline'));
+
+    const result = await playlistService.fetchMultipleSources(['sports', 'freecasthub']);
+    expect(result.isFallback).toBe(true);
+    expect(result.sourceName).toBe('Configured Fallback');
+    expect(result.channels.length).toBeGreaterThan(0);
+    // Every fallback channel must be clearly marked with isFallback
+    expect(result.channels.every((c) => c.isFallback === true)).toBe(true);
+  });
 });
