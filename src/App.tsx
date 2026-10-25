@@ -115,9 +115,12 @@ export function App() {
     }));
   };
 
+  const enabledSourcesKey = preferences.enabledSourceIds.join(',');
+  const customPlaylistsKey = preferences.customPlaylists.map((p) => `${p.id}-${p.url}`).join(',');
+
   // 6. Fetching Playlist (Multi-source for Sports, Single source for specific categories)
   const loadPlaylist = useCallback(
-    async (playlistId: string, forceRefresh = false) => {
+    async (playlistId: string, forceRefresh = false, signal?: AbortSignal) => {
       setIsLoading(true);
       setFetchError(null);
 
@@ -132,34 +135,48 @@ export function App() {
           result = await playlistService.fetchMultipleSources(
             preferences.enabledSourceIds,
             preferences.customPlaylists,
-            { forceRefresh }
+            { forceRefresh, signal }
           );
         } else {
           result = await playlistService.fetchPlaylist(playlist.url, {
             forceRefresh,
+            signal,
             sourceId: playlist.id,
             sourceName: playlist.name,
           });
         }
+
+        if (signal?.aborted) return;
 
         setChannels(result.channels);
         setCategories(result.categories);
         setCountries(result.countries);
         setLanguages(result.languages);
       } catch (err: unknown) {
+        if (signal?.aborted || (err instanceof Error && err.message.includes('cancelled'))) {
+          return; // Ignore normal cancellation on navigation or remount
+        }
         const message = err instanceof Error ? err.message : 'Failed to fetch playlist.';
         setFetchError(message);
       } finally {
-        setIsLoading(false);
+        if (!signal?.aborted) {
+          setIsLoading(false);
+        }
       }
     },
-    [preferences.customPlaylists, preferences.enabledSourceIds]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [enabledSourcesKey, customPlaylistsKey]
   );
 
   // Initial load or when active playlist changes
   useEffect(() => {
-    loadPlaylist(preferences.activePlaylistId);
-  }, [preferences.activePlaylistId, preferences.enabledSourceIds, loadPlaylist]);
+    const controller = new AbortController();
+    loadPlaylist(preferences.activePlaylistId, false, controller.signal);
+
+    return () => {
+      controller.abort();
+    };
+  }, [preferences.activePlaylistId, enabledSourcesKey, customPlaylistsKey, loadPlaylist]);
 
   // Select channel to play
   const handleSelectChannel = useCallback(

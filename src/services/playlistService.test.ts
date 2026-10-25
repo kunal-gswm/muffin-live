@@ -115,6 +115,6 @@ https://stream.ok.com/feed.m3u8
     controller.abort();
     await expect(
       playlistService.fetchPlaylist('https://example.com/test.m3u', { signal: controller.signal })
-    ).rejects.toThrow('Playlist download cancelled or timed out.');
+    ).rejects.toThrow('Playlist download cancelled.');
   });
 });
