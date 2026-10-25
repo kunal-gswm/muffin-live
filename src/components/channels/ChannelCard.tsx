@@ -97,6 +97,23 @@ export const ChannelCard: React.FC<ChannelCardProps> = ({
           </div>
         </div>
 
+        {/* Quality and Geo-blocked badges */}
+        <div className="absolute top-1.5 left-1.5 flex items-center gap-1 z-10">
+          {channel.quality && (
+            <span className="px-1.5 py-0.5 rounded bg-surface-900/90 text-[9px] font-mono font-semibold text-accent border border-surface-700">
+              {channel.quality}
+            </span>
+          )}
+          {channel.isGeoBlocked && (
+            <span
+              className="px-1 py-0.5 rounded bg-amber-500/20 text-[9px] font-mono text-amber-400 border border-amber-500/30"
+              title="Broadcaster may restrict access to specific geographic regions"
+            >
+              GEO
+            </span>
+          )}
+        </div>
+
         {/* Favorite button */}
         <button
           type="button"

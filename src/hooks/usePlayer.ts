@@ -20,6 +20,7 @@ export function usePlayer({
   const containerRef = useRef<HTMLDivElement | null>(null);
   const hlsRef = useRef<Hls | null>(null);
   const retryCountRef = useRef<number>(0);
+  const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [playbackState, setPlaybackState] = useState<PlaybackState>({
     status: channel ? 'loading' : 'idle',
@@ -32,8 +33,13 @@ export function usePlayer({
     duration: 0,
   });
 
-  // Clean up any existing HLS instance
+  // Clean up any existing HLS instance and pending timeouts
   const cleanupHls = useCallback(() => {
+    if (retryTimeoutRef.current) {
+      clearTimeout(retryTimeoutRef.current);
+      retryTimeoutRef.current = null;
+    }
+
     if (hlsRef.current) {
       try {
         hlsRef.current.stopLoad();
@@ -116,6 +122,17 @@ export function usePlayer({
     }
   }, []);
 
+  // Resolves the effective stream URL with HTTPS upgrade if on HTTPS page
+  const getEffectiveStreamUrl = (rawUrl: string): string => {
+    if (typeof window !== 'undefined' && window.location.protocol === 'https:') {
+      if (rawUrl.startsWith('http://')) {
+        // Upgrade to https:// to prevent immediate browser mixed-content blockage
+        return rawUrl.replace('http://', 'https://');
+      }
+    }
+    return rawUrl;
+  };
+
   // Load and play the channel stream
   const loadStream = useCallback(() => {
     const video = videoRef.current;
@@ -137,19 +154,23 @@ export function usePlayer({
     video.volume = initialVolume;
     video.muted = initialMuted;
 
-    const streamUrl = channel.url;
+    const streamUrl = getEffectiveStreamUrl(channel.url);
 
     // Check MSE support with HLS.js
     if (isHlsSupported()) {
       const hls = new Hls({
         enableWorker: true,
-        lowLatencyMode: true,
+        lowLatencyMode: false, // Standard buffer mode for reliable public feeds
         backBufferLength: 60,
-        maxBufferLength: 20,
+        maxBufferLength: 30,
         maxMaxBufferLength: 120,
-        fragLoadingTimeOut: 15000,
-        manifestLoadingTimeOut: 15000,
-        levelLoadingTimeOut: 15000,
+        maxBufferSize: 60 * 1000 * 1000,
+        fragLoadingTimeOut: 20000,
+        manifestLoadingTimeOut: 20000,
+        levelLoadingTimeOut: 20000,
+        xhrSetup: (xhr) => {
+          xhr.withCredentials = false; // Critical: avoid credential CORS rejection on public feeds
+        },
       });
 
       hlsRef.current = hls;
@@ -163,13 +184,24 @@ export function usePlayer({
         const isLive = data.levels.some((lvl) => lvl.details?.live ?? true);
         setPlaybackState((prev) => ({ ...prev, isLive }));
 
-        // Attempt playback
+        // Attempt playback with audio first
         const playPromise = video.play();
         if (playPromise !== undefined) {
           playPromise.catch((err) => {
-            // Autoplay blocked by browser policy
+            // Autoplay blocked by browser policy: try muted autoplay!
             if (err.name === 'NotAllowedError') {
-              setPlaybackState((prev) => ({ ...prev, status: 'paused' }));
+              video.muted = true;
+              setPlaybackState((prev) => ({ ...prev, isMuted: true }));
+              const mutedPromise = video.play();
+              if (mutedPromise !== undefined) {
+                mutedPromise
+                  .then(() => {
+                    setPlaybackState((prev) => ({ ...prev, status: 'playing' }));
+                  })
+                  .catch(() => {
+                    setPlaybackState((prev) => ({ ...prev, status: 'paused' }));
+                  });
+              }
             } else {
               console.warn('Playback error after manifest parsed:', err);
             }
@@ -181,9 +213,13 @@ export function usePlayer({
         if (data.fatal) {
           switch (data.type) {
             case Hls.ErrorTypes.NETWORK_ERROR:
-              if (retryCountRef.current < 1) {
+              if (retryCountRef.current < 2) {
                 retryCountRef.current += 1;
-                hls.startLoad();
+                retryTimeoutRef.current = setTimeout(() => {
+                  if (hlsRef.current) {
+                    hlsRef.current.startLoad();
+                  }
+                }, 1200);
               } else {
                 const httpStatus = data.response?.code;
                 const errorInfo = formatPlaybackError(
@@ -233,7 +269,11 @@ export function usePlayer({
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
           if (err.name === 'NotAllowedError') {
-            setPlaybackState((prev) => ({ ...prev, status: 'paused' }));
+            video.muted = true;
+            setPlaybackState((prev) => ({ ...prev, isMuted: true }));
+            video.play().catch(() => {
+              setPlaybackState((prev) => ({ ...prev, status: 'paused' }));
+            });
           }
         });
       }
@@ -290,7 +330,12 @@ export function usePlayer({
       }));
     };
 
+    // Native video error listener — only trigger error if Hls is NOT active
     const onError = () => {
+      if (hlsRef.current) {
+        // When HLS.js is managing media, ignore native intermediate events
+        return;
+      }
       const mediaError = video.error;
       let details = 'Unknown video error';
       if (mediaError) {

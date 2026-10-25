@@ -231,6 +231,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Muted indicator pill */}
+          {playbackState.isMuted && playbackState.status === 'playing' && (
+            <button
+              onClick={toggleMute}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-accent/20 border border-accent/40 text-accent text-xs font-semibold hover:bg-accent/30 transition-colors animate-pulse"
+              title="Click to unmute stream audio"
+            >
+              <VolumeX className="w-3.5 h-3.5 text-accent" />
+              <span>Unmute</span>
+            </button>
+          )}
+
           {/* Favorite button */}
           <button
             onClick={() => onToggleFavorite(channel.id)}

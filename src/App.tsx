@@ -194,12 +194,14 @@ export function App() {
 
     // Filter by tab / category shortcut
     if (activeTab === 'category' && selectedCategory !== 'all') {
+      const targetCat = selectedCategory.toLowerCase();
       result = result.filter(
-        (c) => c.group.toLowerCase() === selectedCategory.toLowerCase()
+        (c) => c.group.toLowerCase().includes(targetCat)
       );
     } else if (filters.category !== 'all') {
+      const targetCat = filters.category.toLowerCase();
       result = result.filter(
-        (c) => c.group.toLowerCase() === filters.category.toLowerCase()
+        (c) => c.group.toLowerCase().includes(targetCat)
       );
     }
 
@@ -255,11 +257,15 @@ export function App() {
     filters.sortBy,
   ]);
 
-  // Featured Channel (selected from real loaded channels)
+  // Featured Channel (selected from real loaded channels, favoring non-geoblocked channels with logos)
   const featuredChannel = useMemo(() => {
     if (channels.length === 0) return null;
-    // Prefer channel with a high quality logo, or first channel
-    return channels.find((c) => c.logo && c.group === 'News') || channels.find((c) => c.logo) || channels[0];
+    return (
+      channels.find((c) => c.logo && !c.isGeoBlocked && c.group.toLowerCase().includes('news')) ||
+      channels.find((c) => c.logo && !c.isGeoBlocked) ||
+      channels.find((c) => c.logo) ||
+      channels[0]
+    );
   }, [channels]);
 
   // Next / Prev Channel controls
@@ -331,8 +337,20 @@ export function App() {
     extra?: { category?: string }
   ) => {
     setActiveTab(tab);
-    if (tab === 'category' && extra?.category) {
+    if (tab === 'all') {
+      setSelectedCategory('all');
+      // When user clicks All Channels, switch to the master directory
+      if (preferences.activePlaylistId !== 'master') {
+        updatePreferences((prev) => ({ ...prev, activePlaylistId: 'master' }));
+      }
+    } else if (tab === 'category' && extra?.category) {
       setSelectedCategory(extra.category);
+      const catKey = extra.category.toLowerCase();
+      // Automatically switch to the corresponding category playlist if available
+      const matched = allAvailablePlaylists.find((p) => p.id === catKey);
+      if (matched && preferences.activePlaylistId !== matched.id) {
+        updatePreferences((prev) => ({ ...prev, activePlaylistId: matched.id }));
+      }
     } else {
       setSelectedCategory('all');
     }
@@ -447,6 +465,7 @@ export function App() {
                   filters={filters}
                   onFilterChange={handleFilterChange}
                   onResetFilters={handleResetFilters}
+                  onSearchMaster={() => handleSelectPlaylist('master')}
                   categories={categories}
                   countries={countries}
                   languages={languages}
@@ -466,6 +485,7 @@ export function App() {
                   filters={filters}
                   onFilterChange={handleFilterChange}
                   onResetFilters={handleResetFilters}
+                  onSearchMaster={() => handleSelectPlaylist('master')}
                   categories={categories}
                   countries={countries}
                   languages={languages}

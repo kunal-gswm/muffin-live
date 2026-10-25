@@ -11,6 +11,9 @@ export interface Channel {
   tvgId: string | null;
   httpUserAgent?: string;
   httpReferrer?: string;
+  isGeoBlocked?: boolean;
+  isNot247?: boolean;
+  quality?: string;
 }
 
 export interface PlaylistSource {

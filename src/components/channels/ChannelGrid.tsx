@@ -16,6 +16,8 @@ interface ChannelGridProps {
   onResetFilters?: () => void;
   emptyTitle?: string;
   emptyDescription?: string;
+  secondaryActionLabel?: string;
+  onSecondaryAction?: () => void;
 }
 
 const CHUNK_SIZE = 48;
@@ -31,6 +33,8 @@ export const ChannelGrid: React.FC<ChannelGridProps> = ({
   onResetFilters,
   emptyTitle,
   emptyDescription,
+  secondaryActionLabel,
+  onSecondaryAction,
 }) => {
   const [displayedCount, setDisplayedCount] = useState(CHUNK_SIZE);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
@@ -66,6 +70,8 @@ export const ChannelGrid: React.FC<ChannelGridProps> = ({
         description={emptyDescription}
         actionLabel={onResetFilters ? 'Clear all filters' : undefined}
         onAction={onResetFilters}
+        secondaryActionLabel={secondaryActionLabel}
+        onSecondaryAction={onSecondaryAction}
       />
     );
   }

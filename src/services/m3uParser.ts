@@ -126,7 +126,7 @@ export function parseM3U(content: string): PlaylistParseResult {
 
     // This line is a Stream URL (or malformed line)
     if (currentExtInf) {
-      const streamUrl = line;
+      const streamUrl = line.trim().replace(/[\r\n]/g, '');
 
       // Validate URL format
       if (!streamUrl.startsWith('http://') && !streamUrl.startsWith('https://') && !streamUrl.startsWith('rtmp://')) {
@@ -143,19 +143,32 @@ export function parseM3U(content: string): PlaylistParseResult {
 
       try {
         const commaIndex = currentExtInf.indexOf(',');
-        let channelName = '';
+        let rawChannelName = '';
         let metadataPart = '';
 
         if (commaIndex !== -1) {
           metadataPart = currentExtInf.slice(8, commaIndex).trim();
-          channelName = currentExtInf.slice(commaIndex + 1).trim();
+          rawChannelName = currentExtInf.slice(commaIndex + 1).trim();
         } else {
           metadataPart = currentExtInf.slice(8).trim();
-          channelName = 'Unknown Channel';
+          rawChannelName = 'Unknown Channel';
         }
 
-        channelName = decodeHtmlEntities(channelName);
-        if (!channelName) channelName = 'Unnamed Channel';
+        rawChannelName = decodeHtmlEntities(rawChannelName);
+        if (!rawChannelName) rawChannelName = 'Unnamed Channel';
+
+        // Extract metadata flags embedded in stream names
+        const isGeoBlocked = /\[geo-blocked\]/i.test(rawChannelName);
+        const isNot247 = /\[not 24\/7\]/i.test(rawChannelName);
+        const qualityMatch = rawChannelName.match(/\((1080p|720p|576p|480p|4k|uhd|sd|hd)\)/i);
+        const quality = qualityMatch ? qualityMatch[1].toUpperCase() : undefined;
+
+        // Clean display name
+        const cleanDisplayName = rawChannelName
+          .replace(/\[geo-blocked\]/gi, '')
+          .replace(/\[not 24\/7\]/gi, '')
+          .replace(/\((1080p|720p|576p|480p|4k|uhd|sd|hd)\)/gi, '')
+          .trim() || rawChannelName;
 
         const attrs = parseAttributes(metadataPart);
 
@@ -182,7 +195,7 @@ export function parseM3U(content: string): PlaylistParseResult {
         const referrer = attrs['referrer'] || currentReferrer;
 
         // Effective display name
-        const displayName = channelName !== 'Unnamed Channel' ? channelName : (tvgName || 'Channel');
+        const displayName = cleanDisplayName !== 'Unnamed Channel' ? cleanDisplayName : (tvgName || 'Channel');
 
         // Create deterministic unique ID based on tvg-id, clean name, and url hash
         const cleanNameSlug = displayName.toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 30);
@@ -202,6 +215,9 @@ export function parseM3U(content: string): PlaylistParseResult {
           tvgId,
           httpUserAgent: userAgent,
           httpReferrer: referrer,
+          isGeoBlocked,
+          isNot247,
+          quality,
         };
 
         channels.push(channel);

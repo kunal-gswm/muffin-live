@@ -7,6 +7,8 @@ interface EmptyStateProps {
   description?: string;
   actionLabel?: string;
   onAction?: () => void;
+  secondaryActionLabel?: string;
+  onSecondaryAction?: () => void;
   className?: string;
 }
 
@@ -16,6 +18,8 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
   description,
   actionLabel,
   onAction,
+  secondaryActionLabel,
+  onSecondaryAction,
   className = '',
 }) => {
   const getDefaultContent = () => {
@@ -62,15 +66,26 @@ export const EmptyState: React.FC<EmptyStateProps> = ({
       </div>
       <h3 className="text-base font-medium text-surface-200 mb-1">{content.title}</h3>
       <p className="text-sm text-surface-400 leading-relaxed mb-6">{content.desc}</p>
-      {actionLabel && onAction && (
-        <button
-          onClick={onAction}
-          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-100 bg-surface-800 hover:bg-surface-750 border border-surface-700 hover:border-surface-600 rounded-md transition-colors focus:outline-none focus:ring-1 focus:ring-accent"
-        >
-          <RefreshCw className="w-4 h-4 text-accent" />
-          {actionLabel}
-        </button>
-      )}
+      <div className="flex flex-wrap items-center justify-center gap-2.5">
+        {secondaryActionLabel && onSecondaryAction && (
+          <button
+            onClick={onSecondaryAction}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold text-surface-950 bg-accent hover:bg-accent-hover rounded-md transition-colors focus:outline-none focus:ring-1 focus:ring-accent"
+          >
+            <Search className="w-4 h-4" />
+            {secondaryActionLabel}
+          </button>
+        )}
+        {actionLabel && onAction && (
+          <button
+            onClick={onAction}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-surface-100 bg-surface-800 hover:bg-surface-750 border border-surface-700 hover:border-surface-600 rounded-md transition-colors focus:outline-none focus:ring-1 focus:ring-accent"
+          >
+            <RefreshCw className="w-4 h-4 text-accent" />
+            {actionLabel}
+          </button>
+        )}
+      </div>
     </div>
   );
 };

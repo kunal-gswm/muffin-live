@@ -13,6 +13,7 @@ interface HomePageProps {
   filters: FilterState;
   onFilterChange: (filters: Partial<FilterState>) => void;
   onResetFilters: () => void;
+  onSearchMaster?: () => void;
   categories: string[];
   countries: string[];
   languages: string[];
@@ -31,6 +32,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   filters,
   onFilterChange,
   onResetFilters,
+  onSearchMaster,
   categories,
   countries,
   languages,
@@ -121,6 +123,10 @@ export const HomePage: React.FC<HomePageProps> = ({
           onSelectChannel={onSelectChannel}
           onToggleFavorite={onToggleFavorite}
           onResetFilters={onResetFilters}
+          secondaryActionLabel={
+            filters.search && onSearchMaster ? 'Search across Master Directory (11,000+ channels)' : undefined
+          }
+          onSecondaryAction={onSearchMaster}
         />
       </section>
     </div>

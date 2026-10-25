@@ -9,6 +9,7 @@ interface ChannelsPageProps {
   filters: FilterState;
   onFilterChange: (filters: Partial<FilterState>) => void;
   onResetFilters: () => void;
+  onSearchMaster?: () => void;
   categories: string[];
   countries: string[];
   languages: string[];
@@ -25,6 +26,7 @@ export const ChannelsPage: React.FC<ChannelsPageProps> = ({
   filters,
   onFilterChange,
   onResetFilters,
+  onSearchMaster,
   categories,
   countries,
   languages,
@@ -62,6 +64,10 @@ export const ChannelsPage: React.FC<ChannelsPageProps> = ({
         onSelectChannel={onSelectChannel}
         onToggleFavorite={onToggleFavorite}
         onResetFilters={onResetFilters}
+        secondaryActionLabel={
+          filters.search && onSearchMaster ? 'Search across Master Directory (11,000+ channels)' : undefined
+        }
+        onSecondaryAction={onSearchMaster}
       />
     </div>
   );
