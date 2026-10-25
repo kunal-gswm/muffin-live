@@ -2,6 +2,7 @@ import React from 'react';
 import type { Channel, FilterState, PlaybackStatus } from '../types';
 import { ChannelGrid } from '../components/channels/ChannelGrid';
 import { FilterBar } from '../components/search/FilterBar';
+import { CategoryPills } from '../components/common/CategoryPills';
 
 interface ChannelsPageProps {
   title: string;
@@ -10,6 +11,7 @@ interface ChannelsPageProps {
   onFilterChange: (filters: Partial<FilterState>) => void;
   onResetFilters: () => void;
   onSearchMaster?: () => void;
+  onSelectCategoryShortcut?: (category: string) => void;
   categories: string[];
   countries: string[];
   languages: string[];
@@ -27,6 +29,7 @@ export const ChannelsPage: React.FC<ChannelsPageProps> = ({
   onFilterChange,
   onResetFilters,
   onSearchMaster,
+  onSelectCategoryShortcut,
   categories,
   countries,
   languages,
@@ -44,6 +47,19 @@ export const ChannelsPage: React.FC<ChannelsPageProps> = ({
           {channels.length} {channels.length === 1 ? 'channel' : 'channels'}
         </span>
       </div>
+
+      <CategoryPills
+        activeId={filters.category}
+        onSelect={(catId) => {
+          if (catId === 'all') {
+            onFilterChange({ category: 'all' });
+          } else if (onSelectCategoryShortcut) {
+            onSelectCategoryShortcut(catId);
+          } else {
+            onFilterChange({ category: catId });
+          }
+        }}
+      />
 
       <FilterBar
         filters={filters}

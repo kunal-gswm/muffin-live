@@ -6,6 +6,8 @@ import {
   VolumeX,
   Maximize,
   Minimize,
+  Maximize2,
+  Minimize2,
   RefreshCw,
   ChevronLeft,
   ChevronRight,
@@ -47,6 +49,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 }) => {
   const [copied, setCopied] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [isMiniPlayer, setIsMiniPlayer] = useState(false);
   const controlsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
@@ -177,8 +180,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     <div
       ref={containerRef}
       onMouseMove={handleMouseMove}
-      className={`relative w-full bg-black rounded-xl overflow-hidden border border-surface-800 shadow-2xl select-none group ${
-        playbackState.isFullscreen ? 'fixed inset-0 z-50 rounded-none border-none' : 'aspect-video max-h-[75vh]'
+      className={`relative bg-black overflow-hidden shadow-2xl select-none group transition-all duration-200 ${
+        playbackState.isFullscreen
+          ? 'fixed inset-0 z-50 rounded-none border-none w-full h-full'
+          : isMiniPlayer
+          ? 'fixed bottom-20 md:bottom-6 right-4 sm:right-6 w-80 sm:w-96 max-w-[calc(100vw-2rem)] z-50 rounded-xl border border-surface-700 aspect-video'
+          : 'w-full rounded-xl border border-surface-800 aspect-video max-h-[75vh]'
       }`}
     >
       {/* Video Element */}
@@ -240,6 +247,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             >
               <VolumeX className="w-3.5 h-3.5 text-accent" />
               <span>Unmute</span>
+            </button>
+          )}
+
+          {/* Minimize / Expand Toggle */}
+          {!playbackState.isFullscreen && (
+            <button
+              onClick={() => setIsMiniPlayer((prev) => !prev)}
+              className="p-2 rounded-lg bg-surface-900/80 hover:bg-surface-800 text-surface-300 hover:text-white transition-colors border border-surface-700/60"
+              title={isMiniPlayer ? 'Expand to main view' : 'Minimize to corner while browsing'}
+              aria-label={isMiniPlayer ? 'Expand player' : 'Minimize player'}
+            >
+              {isMiniPlayer ? <Maximize2 className="w-4 h-4 text-accent" /> : <Minimize2 className="w-4 h-4" />}
             </button>
           )}
 

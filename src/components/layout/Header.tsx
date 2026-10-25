@@ -64,14 +64,14 @@ export const Header: React.FC<HeaderProps> = ({
 
       {/* Right: Playlist Switcher, Refresh button, Settings button */}
       <div className="flex items-center gap-2 flex-shrink-0">
-        {/* Playlist Selector Dropdown */}
-        <div className="relative hidden lg:flex items-center">
-          <FolderOpen className="w-3.5 h-3.5 text-surface-400 absolute left-2.5 pointer-events-none" />
+        {/* Playlist Selector Dropdown (visible on all screens) */}
+        <div className="relative flex items-center">
+          <FolderOpen className="w-3.5 h-3.5 text-accent absolute left-2.5 pointer-events-none" />
           <select
             value={activePlaylistId}
             onChange={(e) => onSelectPlaylist(e.target.value)}
             disabled={isLoading}
-            className="appearance-none pl-8 pr-7 py-1.5 text-xs bg-surface-900 border border-surface-750 hover:border-surface-700 text-surface-200 rounded-lg outline-none focus:ring-1 focus:ring-accent cursor-pointer disabled:opacity-50"
+            className="appearance-none pl-8 pr-7 py-1.5 text-xs bg-surface-900 border border-surface-750 hover:border-surface-700 text-surface-200 rounded-lg outline-none focus:ring-1 focus:ring-accent cursor-pointer disabled:opacity-50 max-w-[110px] sm:max-w-[170px] md:max-w-none truncate"
             aria-label="Active playlist selector"
           >
             {playlists.map((p) => (

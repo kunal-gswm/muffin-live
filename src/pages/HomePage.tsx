@@ -3,6 +3,7 @@ import type { Channel, FilterState, PlaybackStatus, RecentlyWatchedItem } from '
 import { FeaturedChannel } from '../components/channels/FeaturedChannel';
 import { ChannelGrid } from '../components/channels/ChannelGrid';
 import { FilterBar } from '../components/search/FilterBar';
+import { CategoryPills } from '../components/common/CategoryPills';
 import { History, Play } from 'lucide-react';
 import { LogoFallback } from '../components/common/LogoFallback';
 
@@ -14,6 +15,7 @@ interface HomePageProps {
   onFilterChange: (filters: Partial<FilterState>) => void;
   onResetFilters: () => void;
   onSearchMaster?: () => void;
+  onSelectCategoryShortcut?: (category: string) => void;
   categories: string[];
   countries: string[];
   languages: string[];
@@ -33,6 +35,7 @@ export const HomePage: React.FC<HomePageProps> = ({
   onFilterChange,
   onResetFilters,
   onSearchMaster,
+  onSelectCategoryShortcut,
   categories,
   countries,
   languages,
@@ -104,6 +107,22 @@ export const HomePage: React.FC<HomePageProps> = ({
 
       {/* Channel Browser Section */}
       <section className="space-y-4">
+        {/* Quick Category Navigation Pills */}
+        <CategoryPills
+          activeId={filters.category}
+          onSelect={(catId) => {
+            if (catId === 'all') {
+              onFilterChange({ category: 'all' });
+            } else if (catId === 'favorites') {
+              onFilterChange({ favoritesOnly: !filters.favoritesOnly });
+            } else if (onSelectCategoryShortcut) {
+              onSelectCategoryShortcut(catId);
+            } else {
+              onFilterChange({ category: catId });
+            }
+          }}
+        />
+
         <FilterBar
           filters={filters}
           onFilterChange={onFilterChange}

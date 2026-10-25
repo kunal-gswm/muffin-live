@@ -20,6 +20,8 @@ import type { UserPreferences } from '../../types';
 
 interface SidebarProps {
   activeTab: UserPreferences['activeTab'];
+  selectedCategory?: string;
+  activePlaylistId?: string;
   onSelectTab: (tab: UserPreferences['activeTab'], extra?: { category?: string }) => void;
   favoritesCount: number;
   historyCount: number;
@@ -31,6 +33,8 @@ interface SidebarProps {
 
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
+  selectedCategory,
+  activePlaylistId,
   onSelectTab,
   favoritesCount,
   historyCount,
@@ -114,7 +118,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="space-y-1">
             {navItems.map((item) => {
               const Icon = item.icon;
-              const isActive = activeTab === item.id;
+              const isActive =
+                activeTab === item.id ||
+                (item.id === 'all' && activePlaylistId === 'master' && activeTab === 'all');
               return (
                 <button
                   key={item.id}
@@ -122,12 +128,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onSelectTab(item.id);
                     onCloseMobile();
                   }}
-                  className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors text-left ${
+                  className={`w-full flex items-center py-2 rounded-lg text-xs font-medium transition-colors text-left ${
+                    collapsed ? 'justify-center px-0' : 'gap-3 px-2.5'
+                  } ${
                     isActive
-                      ? 'bg-accent/15 text-accent border border-accent/30 font-semibold'
+                      ? 'bg-accent/15 text-accent border border-accent/30 font-semibold shadow-sm'
                       : 'hover:bg-surface-800 hover:text-surface-100 text-surface-400'
                   }`}
-                  title={collapsed ? item.label : undefined}
+                  title={item.label}
+                  aria-label={item.label}
                 >
                   <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-accent' : ''}`} />
                   {!collapsed && <span className="truncate">{item.label}</span>}
@@ -147,6 +156,10 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="space-y-1">
             {categoryShortcuts.map((item) => {
               const Icon = item.icon;
+              const isCatActive =
+                (activeTab === 'category' && selectedCategory?.toLowerCase() === item.category.toLowerCase()) ||
+                activePlaylistId === item.category.toLowerCase();
+
               return (
                 <button
                   key={item.category}
@@ -154,10 +167,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onSelectTab('category', { category: item.category });
                     onCloseMobile();
                   }}
-                  className="w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium text-surface-400 hover:bg-surface-800 hover:text-surface-100 transition-colors text-left"
-                  title={collapsed ? item.label : undefined}
+                  className={`w-full flex items-center py-2 rounded-lg text-xs font-medium transition-colors text-left ${
+                    collapsed ? 'justify-center px-0' : 'gap-3 px-2.5'
+                  } ${
+                    isCatActive
+                      ? 'bg-accent/15 text-accent border border-accent/30 font-semibold shadow-sm'
+                      : 'hover:bg-surface-800 hover:text-surface-100 text-surface-400'
+                  }`}
+                  title={item.label}
+                  aria-label={item.label}
                 >
-                  <Icon className="w-4 h-4 flex-shrink-0 text-surface-400" />
+                  <Icon className={`w-4 h-4 flex-shrink-0 ${isCatActive ? 'text-accent' : 'text-surface-400'}`} />
                   {!collapsed && <span className="truncate">{item.label}</span>}
                 </button>
               );
@@ -183,12 +203,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onSelectTab(item.id);
                     onCloseMobile();
                   }}
-                  className={`w-full flex items-center gap-3 px-2.5 py-2 rounded-lg text-xs font-medium transition-colors text-left ${
+                  className={`w-full flex items-center py-2 rounded-lg text-xs font-medium transition-colors text-left ${
+                    collapsed ? 'justify-center px-0' : 'gap-3 px-2.5'
+                  } ${
                     isActive
-                      ? 'bg-accent/15 text-accent border border-accent/30 font-semibold'
+                      ? 'bg-accent/15 text-accent border border-accent/30 font-semibold shadow-sm'
                       : 'hover:bg-surface-800 hover:text-surface-100 text-surface-400'
                   }`}
-                  title={collapsed ? item.label : undefined}
+                  title={item.label}
+                  aria-label={item.label}
                 >
                   <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-accent' : ''}`} />
                   {!collapsed && <span className="truncate">{item.label}</span>}
@@ -216,14 +239,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     onSelectTab(item.id);
                     onCloseMobile();
                   }}
-                  className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-medium transition-colors text-left ${
+                  className={`w-full flex items-center justify-between py-2 rounded-lg text-xs font-medium transition-colors text-left ${
+                    collapsed ? 'justify-center px-0' : 'px-2.5'
+                  } ${
                     isActive
-                      ? 'bg-accent/15 text-accent border border-accent/30 font-semibold'
+                      ? 'bg-accent/15 text-accent border border-accent/30 font-semibold shadow-sm'
                       : 'hover:bg-surface-800 hover:text-surface-100 text-surface-400'
                   }`}
-                  title={collapsed ? item.label : undefined}
+                  title={item.label}
+                  aria-label={item.label}
                 >
-                  <div className="flex items-center gap-3 min-w-0">
+                  <div className={`flex items-center min-w-0 ${collapsed ? 'justify-center' : 'gap-3'}`}>
                     <Icon className={`w-4 h-4 flex-shrink-0 ${isActive ? 'text-accent' : ''}`} />
                     {!collapsed && <span className="truncate">{item.label}</span>}
                   </div>

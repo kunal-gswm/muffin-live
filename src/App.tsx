@@ -12,6 +12,7 @@ import { storageService } from './services/storageService';
 import { useDebounce } from './hooks/useDebounce';
 import { Sidebar } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
+import { MobileBottomNav } from './components/layout/MobileBottomNav';
 import { VideoPlayer } from './components/player/VideoPlayer';
 import { LoadingSkeleton } from './components/common/LoadingSkeleton';
 import { EmptyState } from './components/common/EmptyState';
@@ -390,6 +391,8 @@ export function App() {
       {/* Persistent Left Sidebar */}
       <Sidebar
         activeTab={activeTab}
+        selectedCategory={selectedCategory}
+        activePlaylistId={preferences.activePlaylistId}
         onSelectTab={handleSelectTab}
         favoritesCount={preferences.favorites.length}
         historyCount={preferences.recentlyWatched.length}
@@ -422,7 +425,7 @@ export function App() {
         />
 
         {/* Main Content Area */}
-        <main className="flex-1 p-4 md:p-6 max-w-7xl w-full mx-auto space-y-6">
+        <main className="flex-1 p-4 md:p-6 max-w-7xl w-full mx-auto space-y-6 pb-24 md:pb-8">
           {/* Active Video Player (if a channel is currently chosen) */}
           {activeChannel && (
             <div className="w-full">
@@ -466,6 +469,7 @@ export function App() {
                   onFilterChange={handleFilterChange}
                   onResetFilters={handleResetFilters}
                   onSearchMaster={() => handleSelectPlaylist('master')}
+                  onSelectCategoryShortcut={(cat) => handleSelectTab('category', { category: cat })}
                   categories={categories}
                   countries={countries}
                   languages={languages}
@@ -486,6 +490,7 @@ export function App() {
                   onFilterChange={handleFilterChange}
                   onResetFilters={handleResetFilters}
                   onSearchMaster={() => handleSelectPlaylist('master')}
+                  onSelectCategoryShortcut={(cat) => handleSelectTab('category', { category: cat })}
                   categories={categories}
                   countries={countries}
                   languages={languages}
@@ -564,6 +569,14 @@ export function App() {
           )}
         </main>
       </div>
+
+      {/* Mobile Bottom Navigation Bar */}
+      <MobileBottomNav
+        activeTab={activeTab}
+        onSelectTab={handleSelectTab}
+        favoritesCount={preferences.favorites.length}
+        onOpenCategoriesDrawer={() => setIsMobileSidebarOpen(true)}
+      />
     </div>
   );
 }
