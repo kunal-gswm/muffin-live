@@ -77,6 +77,17 @@ const mockChannel2: Channel = {
   tvgId: '30AGolfKingdom.us',
 };
 
+const mockChannelBeinChild: Channel = {
+  id: 'stream-test-bein-child',
+  name: 'beIN Sports 1 (1080p)',
+  url: 'http://primetv.cc.cd/beinfhd11/tracks-v1a1/mono.tbin.m3u8',
+  logo: null,
+  group: 'Sports',
+  country: 'QA',
+  language: 'Arabic',
+  tvgId: 'beINSports1.qa',
+};
+
 function triggerHlsEvent(event: string, data: any = {}) {
   const handlers = hlsHandlers.get(event) || [];
   for (const h of handlers) {
@@ -561,5 +572,81 @@ describe('usePlayer hook regression suite', () => {
     expect(result.current.playbackState.status).not.toBe('error');
     expect(result.current.playbackState.error).toBeNull();
     expect(result.current.diagnostics.abortErrorCount).toBe(1);
+  });
+
+  it('13. Verifies that manifestLoadError recovery invokes loadSource(streamUrl) to reload manifest', () => {
+    const { result } = renderHook(() =>
+      usePlayer({
+        channel: mockChannel2,
+      })
+    );
+
+    const mockVideo = document.createElement('video');
+    result.current.videoRef.current = mockVideo;
+
+    act(() => {
+      result.current.retry();
+    });
+
+    const hls = mockHlsInstance;
+
+    // Simulate media attached event which triggers initial loadSource
+    act(() => {
+      triggerHlsEvent('hlsMediaAttached');
+    });
+    expect(hls.loadSource).toHaveBeenCalledTimes(1);
+
+    // Trigger manifestLoadError
+    act(() => {
+      triggerHlsEvent('hlsError', {
+        type: 'networkError',
+        details: 'manifestLoadError',
+        fatal: true,
+        response: { code: 0 },
+      });
+    });
+
+    expect(result.current.playbackState.status).toBe('recovering');
+
+    // Advance 800ms recovery timer
+    act(() => {
+      vi.advanceTimersByTime(800);
+    });
+
+    // In recovery, loadSource must be called to reload manifest (NOT startLoad which is only for fragments)
+    expect(hls.loadSource).toHaveBeenCalledTimes(2);
+  });
+
+  it('14. Investigates beIN Sports child playlist (mono.tbin.m3u8): handles child playlist failures with immediate diagnosis and official broadcaster link', () => {
+    const { result } = renderHook(() =>
+      usePlayer({
+        channel: mockChannelBeinChild,
+      })
+    );
+
+    const mockVideo = document.createElement('video');
+    result.current.videoRef.current = mockVideo;
+
+    act(() => {
+      result.current.retry();
+    });
+
+    expect(result.current.playbackState.status).toBe('loading');
+
+    // Edge responds with Cloudflare 403 Forbidden
+    act(() => {
+      triggerHlsEvent('hlsError', {
+        type: 'networkError',
+        details: 'manifestLoadError',
+        fatal: true,
+        response: { code: 403 },
+      });
+    });
+
+    // Immediately terminates with accessDenied and official broadcaster link without infinite loops
+    expect(result.current.playbackState.status).toBe('error');
+    expect(result.current.playbackState.error?.category).toBe('accessDenied');
+    expect(result.current.playbackState.error?.officialUrl).toBe('https://www.beinsports.com');
+    expect(result.current.diagnostics.recoveryAttempts).toBe(0);
   });
 });

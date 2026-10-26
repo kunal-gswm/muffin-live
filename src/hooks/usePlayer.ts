@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Hls from 'hls.js';
-import type { Channel, PlaybackDiagnostics, PlaybackState, PlaybackStatus } from '../types';
+import type { Channel, PlaybackDiagnostics, PlaybackError, PlaybackState, PlaybackStatus } from '../types';
 import { isHlsSupported, canPlayNativeHls, formatPlaybackError } from '../services/playbackService';
 
 interface UsePlayerOptions {
@@ -458,12 +458,25 @@ export function usePlayer({
           );
           cleanupHls('startup_timeout');
           diagnosticsRef.current.stage = 'timeout';
-          const errorInfo = formatPlaybackError(
-            'timeout',
-            `Connection timed out after ${timeoutSeconds}s waiting for playable media frames.`,
-            undefined,
-            currentChannel
-          );
+
+          // If an underlying fatal HLS error was already encountered during recovery, preserve its diagnosis
+          let errorInfo: PlaybackError;
+          if (diagnosticsRef.current.hlsFatalError) {
+            errorInfo = formatPlaybackError(
+              'networkError',
+              diagnosticsRef.current.hlsFatalError,
+              diagnosticsRef.current.networkErrorCode,
+              currentChannel
+            );
+          } else {
+            errorInfo = formatPlaybackError(
+              'timeout',
+              `Connection timed out after ${timeoutSeconds}s waiting for playable media frames.`,
+              undefined,
+              currentChannel
+            );
+          }
+
           return {
             ...prev,
             status: 'error',
@@ -621,6 +634,7 @@ export function usePlayer({
 
         // Recoverable error: transition to 'recovering' with bounded recovery attempt
         if (data.fatal) {
+          diagnosticsRef.current.hlsFatalError = data.details;
           recoveryCountRef.current += 1;
           diagnosticsRef.current.recoveryAttempts = recoveryCountRef.current;
           diagnosticsRef.current.stage = 'recovering';
@@ -637,11 +651,35 @@ export function usePlayer({
 
             if (hlsRef.current) {
               if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                if (data.details === 'manifestParsingError') {
+                  cleanupHls('fatal_manifest_parsing_error');
+                  playbackStatusRef.current = 'error';
+                  const errorInfo = formatPlaybackError(
+                    data.type,
+                    data.details,
+                    httpStatus,
+                    currentChannel
+                  );
+                  setPlaybackState((prev) => ({
+                    ...prev,
+                    status: 'error',
+                    error: errorInfo,
+                  }));
+                  return;
+                }
                 logLifecycle(currentLoadId, 'Invoking hls.recoverMediaError()');
                 hlsRef.current.recoverMediaError();
               } else if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
-                logLifecycle(currentLoadId, 'Invoking hls.startLoad()');
-                hlsRef.current.startLoad();
+                if (
+                  data.details === 'manifestLoadError' ||
+                  data.details === 'manifestLoadTimeOut'
+                ) {
+                  logLifecycle(currentLoadId, 'Invoking hls.loadSource() for manifest retry');
+                  hlsRef.current.loadSource(streamUrl);
+                } else {
+                  logLifecycle(currentLoadId, 'Invoking hls.startLoad()');
+                  hlsRef.current.startLoad();
+                }
               } else {
                 cleanupHls('unrecoverable_hls_error');
                 playbackStatusRef.current = 'error';
