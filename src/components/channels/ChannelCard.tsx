@@ -1,5 +1,5 @@
 import React from 'react';
-import { Bookmark, Play, Volume2, AlertTriangle, Radio } from 'lucide-react';
+import { Bookmark, Play, Volume2, AlertTriangle, Radio, RefreshCw } from 'lucide-react';
 import type { Channel, PlaybackStatus } from '../../types';
 import { LogoFallback } from '../common/LogoFallback';
 import { Tooltip } from '../common/Tooltip';
@@ -46,7 +46,7 @@ export const ChannelCard: React.FC<ChannelCardProps> = ({
       );
     }
 
-    if (playbackStatus === 'loading' || playbackStatus === 'connecting') {
+    if (playbackStatus === 'loading') {
       return (
         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium bg-sky-500/20 text-sky-300 border border-sky-500/30 rounded">
           <Radio className="w-3 h-3 animate-spin" />
@@ -64,7 +64,16 @@ export const ChannelCard: React.FC<ChannelCardProps> = ({
       );
     }
 
-    if (playbackStatus === 'error' || playbackStatus === 'failed') {
+    if (playbackStatus === 'recovering') {
+      return (
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded">
+          <RefreshCw className="w-3 h-3 animate-spin" />
+          <span>Reconnecting</span>
+        </span>
+      );
+    }
+
+    if (playbackStatus === 'error') {
       return (
         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium bg-red-500/20 text-red-400 border border-red-500/30 rounded">
           <AlertTriangle className="w-3 h-3" />

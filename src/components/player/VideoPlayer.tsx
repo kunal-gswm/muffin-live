@@ -20,6 +20,7 @@ import {
   Tv,
   Info,
   Zap,
+  Globe,
 } from 'lucide-react';
 import type { Channel } from '../../types';
 import { usePlayer } from '../../hooks/usePlayer';
@@ -163,11 +164,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     }
   };
 
-  const isConnectingOrLoading =
-    playbackState.status === 'loading' || playbackState.status === 'connecting';
-  const isFailedOrError =
-    playbackState.status === 'error' || playbackState.status === 'failed';
+  const isLoading = playbackState.status === 'loading';
+  const isRecovering = playbackState.status === 'recovering';
+  const isFailedOrError = playbackState.status === 'error';
   const isBuffering = playbackState.status === 'buffering';
+  const displayQuality =
+    playbackState.status === 'playing' && playbackState.observedResolution
+      ? playbackState.observedResolution
+      : channel.quality || null;
 
   // -------------------------------------------------------------
   // Mini Player Floating View
@@ -186,7 +190,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             muted={playbackState.isMuted}
           />
 
-          {isConnectingOrLoading && (
+          {(isLoading || isRecovering) && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/60 backdrop-blur-xs">
               <div className="w-8 h-8 rounded-full border-2 border-accent/20 border-t-accent animate-spin" />
             </div>
@@ -341,9 +345,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               <h2 className="text-sm sm:text-base font-semibold text-white truncate max-w-[200px] sm:max-w-md">
                 {channel.name}
               </h2>
-              {channel.quality && (
+              {displayQuality && (
                 <span className="px-1.5 py-0.5 text-[10px] font-semibold bg-surface-800 text-surface-200 border border-surface-700 rounded">
-                  {channel.quality}
+                  {displayQuality}
                 </span>
               )}
               {channel.isFallback && (
@@ -473,6 +477,18 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               <span className="text-surface-400">Timeout Watchdog:</span>
               <span className="text-white">{connectionTimeoutSeconds}s</span>
             </div>
+            {diagnostics.recoveryAttempts !== undefined && diagnostics.recoveryAttempts > 0 && (
+              <div className="flex justify-between">
+                <span className="text-surface-400">Recovery Attempts:</span>
+                <span className="text-amber-400">{diagnostics.recoveryAttempts} / 2</span>
+              </div>
+            )}
+            {playbackState.observedResolution && (
+              <div className="flex justify-between">
+                <span className="text-surface-400">Observed Resolution:</span>
+                <span className="text-emerald-400">{playbackState.observedResolution}</span>
+              </div>
+            )}
             <div className="flex justify-between">
               <span className="text-surface-400">Confirmed in Session:</span>
               <span className={diagnostics.everSucceededInSession ? 'text-emerald-400' : 'text-surface-400'}>
@@ -505,6 +521,25 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 <span className="text-red-400 truncate max-w-[150px]">{diagnostics.hlsFatalError}</span>
               </div>
             )}
+            {playbackState.error?.category && (
+              <div className="flex justify-between">
+                <span className="text-surface-400">Error Category:</span>
+                <span className="text-red-400 font-mono text-[10px]">{playbackState.error.category}</span>
+              </div>
+            )}
+            {playbackState.error?.officialUrl && (
+              <div className="pt-1.5 border-t border-surface-800 flex justify-between items-center">
+                <span className="text-surface-400">Official Link:</span>
+                <a
+                  href={playbackState.error.officialUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-accent hover:underline flex items-center gap-1"
+                >
+                  Visit Site <Globe className="w-3 h-3" />
+                </a>
+              </div>
+            )}
             <div className="pt-2 border-t border-surface-800 break-all text-[11px] text-surface-400">
               <span className="font-medium text-surface-300">Stream URL:</span>
               <p className="mt-0.5 text-surface-400 font-mono select-all">{channel.url}</p>
@@ -513,8 +548,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       )}
 
-      {/* Middle State: Loading / Connecting Spinner */}
-      {isConnectingOrLoading && (
+      {/* Middle State: Loading Spinner */}
+      {isLoading && (
         <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/75 backdrop-blur-sm z-20 p-4">
           <div className="relative">
             <div className="w-12 h-12 rounded-full border-2 border-accent/20 border-t-accent animate-spin" />
@@ -522,6 +557,35 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           </div>
           <span className="text-xs font-medium text-surface-200 mt-3 tracking-wide">
             Connecting to live feed...
+          </span>
+          <div className="mt-4 flex items-center gap-2">
+            <button
+              onClick={onNextChannel}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-surface-850 hover:bg-surface-800 border border-surface-700 text-xs font-medium text-surface-200 hover:text-white transition-colors shadow-sm"
+              title="Skip to next channel in list"
+            >
+              <span>Skip to next channel</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={onClose}
+              className="px-2.5 py-1.5 rounded-md bg-surface-900 hover:bg-surface-850 border border-surface-750 text-xs text-surface-400 hover:text-surface-200 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Middle State: Recovering / Reconnecting */}
+      {isRecovering && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/75 backdrop-blur-sm z-20 p-4">
+          <div className="relative">
+            <div className="w-12 h-12 rounded-full border-2 border-amber-500/20 border-t-amber-400 animate-spin" />
+            <RefreshCw className="w-5 h-5 text-amber-400 absolute inset-0 m-auto animate-spin" />
+          </div>
+          <span className="text-xs font-medium text-amber-200 mt-3 tracking-wide">
+            Reconnecting to stream (attempt {diagnostics.recoveryAttempts || 1} of 2)...
           </span>
           <div className="mt-4 flex items-center gap-2">
             <button
@@ -564,7 +628,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
       {/* Middle State: Error Overlay */}
       {isFailedOrError && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface-950/95 p-6 z-20 text-center">
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-surface-950/95 p-6 z-20 text-center overflow-y-auto">
           <div className="p-3 mb-3 rounded-full bg-red-500/10 border border-red-500/20 text-red-400">
             <AlertCircle className="w-8 h-8" />
           </div>
@@ -573,12 +637,31 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             {playbackState.error?.message || 'Playback Error'}
           </h3>
 
-          <p className="text-xs text-surface-400 max-w-md mb-4 leading-relaxed">
+          <p className="text-xs text-surface-300 max-w-md mb-2 leading-relaxed">
             {playbackState.error?.details ||
               'This public stream is currently unavailable, offline, or restricted by the broadcaster.'}
           </p>
 
+          {playbackState.error?.diagnosticsHelp && (
+            <p className="text-[11px] text-surface-400 max-w-lg mb-4 leading-relaxed bg-surface-900/60 p-2.5 rounded-lg border border-surface-800 text-left">
+              <span className="font-semibold text-surface-300 block mb-0.5">Diagnostic Details:</span>
+              {playbackState.error.diagnosticsHelp}
+            </p>
+          )}
+
           <div className="flex flex-wrap items-center justify-center gap-2.5">
+            {playbackState.error?.officialUrl && (
+              <a
+                href={playbackState.error.officialUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-sky-300 bg-sky-950/80 hover:bg-sky-900 border border-sky-800/80 rounded-md transition-colors"
+              >
+                <span>Visit Official Website</span>
+                <Globe className="w-3.5 h-3.5" />
+              </a>
+            )}
+
             <button
               onClick={onNextChannel}
               className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-surface-950 bg-accent hover:bg-accent-hover rounded-md transition-colors shadow-sm"
@@ -587,13 +670,15 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
 
-            <button
-              onClick={retry}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-surface-200 bg-surface-850 hover:bg-surface-800 border border-surface-700 rounded-md transition-colors"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              Retry Stream
-            </button>
+            {playbackState.error?.canRetry !== false && (
+              <button
+                onClick={retry}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-medium text-surface-200 bg-surface-850 hover:bg-surface-800 border border-surface-700 rounded-md transition-colors"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Retry Stream
+              </button>
+            )}
 
             <button
               onClick={handleCopyUrl}
@@ -602,6 +687,13 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             >
               {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
               {copied ? 'Copied' : 'Copy URL'}
+            </button>
+
+            <button
+              onClick={onClose}
+              className="px-3 py-2 rounded-md bg-surface-900 hover:bg-surface-850 border border-surface-750 text-xs text-surface-400 hover:text-surface-200 transition-colors"
+            >
+              Close Player
             </button>
           </div>
         </div>

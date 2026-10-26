@@ -40,20 +40,30 @@ export interface PlaylistSource {
 }
 
 export type PlaybackStatus =
-  | 'untested'
   | 'idle'
   | 'loading'
-  | 'connecting'
   | 'playing'
+  | 'recovering'
+  | 'error'
   | 'paused'
   | 'buffering'
-  | 'error'
-  | 'failed'
-  | 'cancelled'
-  | 'ended';
+  | 'untested';
+
+export type PlaybackErrorCategory =
+  | 'accessDenied'
+  | 'authRequired'
+  | 'notFound'
+  | 'serverError'
+  | 'undeterminedNetwork'
+  | 'manifestParsing'
+  | 'segmentFailed'
+  | 'unsupportedCodec'
+  | 'timeout'
+  | 'fatalError';
 
 export interface PlaybackError {
   message: string;
+  category?: PlaybackErrorCategory;
   type?: string;
   details?: string;
   isCorsOrNetwork?: boolean;
@@ -61,6 +71,8 @@ export interface PlaybackError {
   httpStatus?: number;
   isAuthRestricted?: boolean;
   unsupportedCodec?: boolean;
+  officialUrl?: string | null;
+  diagnosticsHelp?: string;
 }
 
 export interface PlaybackDiagnostics {
@@ -74,6 +86,10 @@ export interface PlaybackDiagnostics {
   autoplayBlocked?: boolean;
   isCorsError?: boolean;
   isAuthRestricted?: boolean;
+  recoveryAttempts?: number;
+  channelLoadId?: number;
+  diagnosedCause?: string;
+  observedResolution?: string | null;
 }
 
 export interface PlaybackState {
@@ -87,6 +103,7 @@ export interface PlaybackState {
   duration: number;
   timeToFirstFrameMs?: number | null;
   everSucceededInSession?: boolean;
+  observedResolution?: string | null;
 }
 
 export type ViewMode = 'grid' | 'list';
