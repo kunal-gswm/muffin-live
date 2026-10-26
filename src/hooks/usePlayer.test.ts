@@ -443,4 +443,123 @@ describe('usePlayer hook regression suite', () => {
     expect(result.current.playbackState.status).toBe('error');
     expect(result.current.diagnostics.recoveryAttempts).toBe(1);
   });
+
+  it('11. Proves that a stale play() rejection or AbortError does not overwrite the state of a newer channel load', async () => {
+    let playRejectChannel1: (err: any) => void;
+    const playPromiseChannel1 = new Promise<void>((_, reject) => {
+      playRejectChannel1 = reject;
+    });
+
+    let playResolveChannel2: () => void;
+    const playPromiseChannel2 = new Promise<void>((resolve) => {
+      playResolveChannel2 = resolve;
+    });
+
+    let currentChannel = mockChannel1;
+    const { result, rerender } = renderHook(() =>
+      usePlayer({
+        channel: currentChannel,
+      })
+    );
+
+    const mockVideo = document.createElement('video');
+    let playCallCount = 0;
+    mockVideo.play = vi.fn(() => {
+      playCallCount++;
+      if (playCallCount === 1) {
+        return playPromiseChannel1;
+      }
+      return playPromiseChannel2;
+    });
+    result.current.videoRef.current = mockVideo;
+
+    // Retry to initiate loading channel 1
+    act(() => {
+      result.current.retry();
+    });
+    expect(result.current.playbackState.status).toBe('loading');
+
+    // Trigger manifest parsed for channel 1 -> calls play()
+    act(() => {
+      triggerHlsEvent('hlsManifestParsed', { levels: [{ details: { live: true } }] });
+    });
+    expect(mockVideo.play).toHaveBeenCalledTimes(1);
+
+    // Now user switches to Channel 2 before Channel 1's play resolves/rejects
+    currentChannel = mockChannel2;
+    rerender();
+    expect(result.current.playbackState.status).toBe('loading');
+
+    // Now Channel 1's play promise rejects with AbortError
+    const abortErr = new Error('The play() request was interrupted by a new load request.');
+    abortErr.name = 'AbortError';
+
+    await act(async () => {
+      playRejectChannel1!(abortErr);
+    });
+
+    // Channel 2 must remain in 'loading' state, NOT error or paused!
+    expect(result.current.playbackState.status).toBe('loading');
+    expect(result.current.playbackState.error).toBeNull();
+
+    // Now manifest parsed for channel 2
+    act(() => {
+      triggerHlsEvent('hlsManifestParsed', { levels: [{ details: { live: true } }] });
+    });
+
+    await act(async () => {
+      playResolveChannel2!();
+    });
+
+    // Advance frames to confirm channel 2 playback
+    Object.defineProperty(mockVideo, 'currentTime', { value: 1.2, configurable: true });
+    Object.defineProperty(mockVideo, 'readyState', { value: 3, configurable: true });
+    Object.defineProperty(mockVideo, 'videoWidth', { value: 1280, configurable: true });
+    Object.defineProperty(mockVideo, 'videoHeight', { value: 720, configurable: true });
+
+    act(() => {
+      mockVideo.dispatchEvent(new Event('timeupdate'));
+    });
+
+    expect(result.current.playbackState.status).toBe('playing');
+    expect(result.current.playbackState.error).toBeNull();
+  });
+
+  it('12. Handles AbortError gracefully during stream transition without reporting terminal error', async () => {
+    let playReject: (err: any) => void;
+    const playPromise = new Promise<void>((_, reject) => {
+      playReject = reject;
+    });
+
+    const { result } = renderHook(() =>
+      usePlayer({
+        channel: mockChannel2,
+      })
+    );
+
+    const mockVideo = document.createElement('video');
+    mockVideo.play = vi.fn(() => playPromise);
+    result.current.videoRef.current = mockVideo;
+
+    act(() => {
+      result.current.retry();
+    });
+
+    act(() => {
+      triggerHlsEvent('hlsManifestParsed', { levels: [{ details: { live: true } }] });
+    });
+
+    // Teardown or interruption rejects with AbortError
+    const abortErr = new Error('The play() request was interrupted by a new load request.');
+    abortErr.name = 'AbortError';
+
+    await act(async () => {
+      playReject!(abortErr);
+    });
+
+    // AbortError is treated as expected transition, NOT terminal error!
+    expect(result.current.playbackState.status).not.toBe('error');
+    expect(result.current.playbackState.error).toBeNull();
+    expect(result.current.diagnostics.abortErrorCount).toBe(1);
+  });
 });

@@ -90,6 +90,8 @@ export interface PlaybackDiagnostics {
   channelLoadId?: number;
   diagnosedCause?: string;
   observedResolution?: string | null;
+  stage?: string;
+  abortErrorCount?: number;
 }
 
 export interface PlaybackState {

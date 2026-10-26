@@ -212,6 +212,14 @@ export function App() {
     [updatePreferences]
   );
 
+  // Volume change handler
+  const handleVolumeChange = useCallback(
+    (volume: number, isMuted: boolean) => {
+      updatePreferences((prev) => ({ ...prev, volume, isMuted }));
+    },
+    [updatePreferences]
+  );
+
   // Toggle favorite channel
   const handleToggleFavorite = useCallback(
     (channelId: string) => {
@@ -511,9 +519,7 @@ export function App() {
                 isMuted={preferences.isMuted}
                 isFavorite={favoritesSet.has(activeChannel.id)}
                 connectionTimeoutSeconds={preferences.connectionTimeoutSeconds}
-                onVolumeChange={(volume, isMuted) =>
-                  updatePreferences((prev) => ({ ...prev, volume, isMuted }))
-                }
+                onVolumeChange={handleVolumeChange}
                 onToggleFavorite={handleToggleFavorite}
                 onNextChannel={handleNextChannel}
                 onPrevChannel={handlePrevChannel}

@@ -13,6 +13,24 @@ interface UsePlayerOptions {
 
 const MAX_RECOVERIES = 1;
 
+/**
+ * Timestamped development lifecycle logger.
+ */
+const isDev =
+  Boolean(import.meta.env?.DEV) ||
+  (typeof window !== 'undefined' && Boolean((window as any).__MUFFIN_DEBUG__));
+
+const logLifecycle = (loadId: number, event: string, extra?: unknown) => {
+  if (isDev) {
+    const ts = new Date().toISOString().substring(11, 23);
+    if (extra !== undefined) {
+      console.debug(`[MuffinPlayer ${ts}][load#${loadId}] ${event}`, extra);
+    } else {
+      console.debug(`[MuffinPlayer ${ts}][load#${loadId}] ${event}`);
+    }
+  }
+};
+
 export function usePlayer({
   channel,
   initialVolume = 0.8,
@@ -32,6 +50,19 @@ export function usePlayer({
   const channelLoadIdRef = useRef<number>(0);
   const playbackStatusRef = useRef<PlaybackStatus>(channel ? 'loading' : 'idle');
 
+  // Store options in refs so re-renders or callback changes do not recreate loadStream or restart playback
+  const channelRef = useRef<Channel | null>(channel);
+  const initialVolumeRef = useRef<number>(initialVolume);
+  const initialMutedRef = useRef<boolean>(initialMuted);
+  const timeoutSecondsRef = useRef<number>(connectionTimeoutSeconds);
+  const onVolumeChangeRef = useRef(onVolumeChange);
+
+  channelRef.current = channel;
+  initialVolumeRef.current = initialVolume;
+  initialMutedRef.current = initialMuted;
+  timeoutSecondsRef.current = connectionTimeoutSeconds;
+  onVolumeChangeRef.current = onVolumeChange;
+
   const diagnosticsRef = useRef<PlaybackDiagnostics>({
     timeToFirstFrameMs: null,
     connectingStartedAt: null,
@@ -46,6 +77,8 @@ export function usePlayer({
     channelLoadId: 0,
     diagnosedCause: undefined,
     observedResolution: null,
+    stage: channel ? 'starting' : 'idle',
+    abortErrorCount: 0,
   });
 
   const [playbackState, setPlaybackState] = useState<PlaybackState>({
@@ -63,7 +96,8 @@ export function usePlayer({
   });
 
   // Clean up existing HLS instance, all bounded timers, listeners, and pending retries
-  const cleanupHls = useCallback(() => {
+  const cleanupHls = useCallback((reason: string = 'cleanup') => {
+    logLifecycle(channelLoadIdRef.current, `cleanupHls called (${reason})`);
     if (startupTimeoutRef.current) {
       clearTimeout(startupTimeoutRef.current);
       startupTimeoutRef.current = null;
@@ -104,9 +138,9 @@ export function usePlayer({
         volume: clamped,
         isMuted: clamped === 0 ? true : prev.isMuted,
       }));
-      onVolumeChange?.(clamped, clamped === 0 ? true : playbackState.isMuted);
+      onVolumeChangeRef.current?.(clamped, clamped === 0 ? true : playbackState.isMuted);
     },
-    [playbackState.isMuted, onVolumeChange]
+    [playbackState.isMuted]
   );
 
   // Toggle mute
@@ -118,8 +152,8 @@ export function usePlayer({
       ...prev,
       isMuted: nextMuted,
     }));
-    onVolumeChange?.(playbackState.volume, nextMuted);
-  }, [playbackState.volume, onVolumeChange]);
+    onVolumeChangeRef.current?.(playbackState.volume, nextMuted);
+  }, [playbackState.volume]);
 
   // Toggle play/pause
   const togglePlay = useCallback(() => {
@@ -130,6 +164,10 @@ export function usePlayer({
       const playPromise = video.play();
       if (playPromise !== undefined) {
         playPromise.catch((err) => {
+          if (err?.name === 'AbortError') {
+            diagnosticsRef.current.abortErrorCount = (diagnosticsRef.current.abortErrorCount || 0) + 1;
+            return;
+          }
           console.warn('Play prevented by browser:', err);
           diagnosticsRef.current.autoplayBlocked = true;
           setPlaybackState((prev) => ({ ...prev, status: 'paused' }));
@@ -193,6 +231,11 @@ export function usePlayer({
       (video.readyState >= 2 && video.videoWidth > 0);
 
     if (hasAdvancedTime || hasDecodedFrames) {
+      logLifecycle(
+        channelLoadIdRef.current,
+        `verifyActualPlayback: confirmed playback (time=${video.currentTime.toFixed(2)}s, readyState=${video.readyState}, ${video.videoWidth}x${video.videoHeight})`
+      );
+
       // Clear startup watchdog on confirmed playback
       if (startupTimeoutRef.current) {
         clearTimeout(startupTimeoutRef.current);
@@ -213,6 +256,7 @@ export function usePlayer({
         else observedRes = `${video.videoHeight}p`;
       }
       diagnosticsRef.current.observedResolution = observedRes;
+      diagnosticsRef.current.stage = 'playing';
       playbackStatusRef.current = 'playing';
 
       if (!diagnosticsRef.current.everSucceededInSession) {
@@ -247,28 +291,30 @@ export function usePlayer({
       }
 
       const onPlay = () => {
-        if (loadId !== channelLoadIdRef.current) return;
+        if (loadId !== channelLoadIdRef.current || isCancelledRef.current) return;
         verifyActualPlayback(loadId);
       };
 
       const onPause = () => {
-        if (loadId !== channelLoadIdRef.current) return;
+        if (loadId !== channelLoadIdRef.current || isCancelledRef.current) return;
         playbackStatusRef.current = 'paused';
         setPlaybackState((prev) => (prev.status === 'playing' ? { ...prev, status: 'paused' } : prev));
       };
 
       const onWaiting = () => {
-        if (loadId !== channelLoadIdRef.current) return;
+        if (loadId !== channelLoadIdRef.current || isCancelledRef.current) return;
         // If media stalls while playing, transition to recovering with bounded recovery timeout
         if (playbackStatusRef.current === 'playing' && recoveryCountRef.current < MAX_RECOVERIES) {
           recoveryCountRef.current += 1;
           diagnosticsRef.current.recoveryAttempts = recoveryCountRef.current;
+          diagnosticsRef.current.stage = 'recovering';
           playbackStatusRef.current = 'recovering';
           setPlaybackState((prev) => ({ ...prev, status: 'recovering' }));
 
           recoveryTimeoutRef.current = setTimeout(() => {
-            if (loadId !== channelLoadIdRef.current) return;
+            if (loadId !== channelLoadIdRef.current || isCancelledRef.current) return;
             if (hlsRef.current) {
+              logLifecycle(loadId, 'Waiting stalled -> recovering media error');
               hlsRef.current.recoverMediaError();
             }
           }, 1500);
@@ -276,12 +322,12 @@ export function usePlayer({
       };
 
       const onLoadedData = () => {
-        if (loadId !== channelLoadIdRef.current) return;
+        if (loadId !== channelLoadIdRef.current || isCancelledRef.current) return;
         verifyActualPlayback(loadId);
       };
 
       const onTimeUpdate = () => {
-        if (loadId !== channelLoadIdRef.current) return;
+        if (loadId !== channelLoadIdRef.current || isCancelledRef.current) return;
         if (video.currentTime > 0) {
           verifyActualPlayback(loadId);
         }
@@ -293,7 +339,7 @@ export function usePlayer({
       };
 
       const onError = () => {
-        if (loadId !== channelLoadIdRef.current) return;
+        if (loadId !== channelLoadIdRef.current || isCancelledRef.current) return;
         if (hlsRef.current) return; // Hls error handler manages HLS errors
         const mediaError = video.error;
         let details = 'Unknown video element error';
@@ -315,8 +361,10 @@ export function usePlayer({
               break;
           }
         }
-        cleanupHls();
-        const errorInfo = formatPlaybackError('mediaElementError', details, undefined, channel);
+        logLifecycle(loadId, `Video element error: ${details}`);
+        cleanupHls('media_element_error');
+        diagnosticsRef.current.stage = 'error';
+        const errorInfo = formatPlaybackError('mediaElementError', details, undefined, channelRef.current);
         setPlaybackState((prev) => ({
           ...prev,
           status: 'error',
@@ -340,7 +388,7 @@ export function usePlayer({
         video.removeEventListener('error', onError);
       };
     },
-    [channel, cleanupHls, verifyActualPlayback]
+    [cleanupHls, verifyActualPlayback]
   );
 
   // Load and play the channel stream
@@ -348,15 +396,22 @@ export function usePlayer({
     isCancelledRef.current = false;
     const currentLoadId = ++channelLoadIdRef.current;
     diagnosticsRef.current.channelLoadId = currentLoadId;
+    diagnosticsRef.current.stage = 'starting';
 
+    const currentChannel = channelRef.current;
     const video = videoRef.current;
-    if (!video || !channel) {
-      cleanupHls();
+    if (!video || !currentChannel) {
+      logLifecycle(currentLoadId, 'loadStream: videoRef or channel is null; transitioning to idle');
+      cleanupHls('no_video_or_channel');
       setPlaybackState((prev) => ({ ...prev, status: 'idle', error: null }));
       return;
     }
 
-    cleanupHls();
+    logLifecycle(
+      currentLoadId,
+      `loadStream: starting for channel "${currentChannel.name}" (${currentChannel.url})`
+    );
+    cleanupHls('new_load_started');
     attachVideoListeners(video, currentLoadId);
 
     loadStartTimeRef.current = Date.now();
@@ -381,24 +436,33 @@ export function usePlayer({
       observedResolution: null,
     }));
 
-    video.volume = initialVolume;
-    video.muted = initialMuted;
+    video.volume = initialVolumeRef.current;
+    video.muted = initialMutedRef.current;
 
-    const streamUrl = getEffectiveStreamUrl(channel.url);
-    const timeoutMs = Math.max(6000, Math.min(30000, connectionTimeoutSeconds * 1000));
+    const streamUrl = getEffectiveStreamUrl(currentChannel.url);
+    const timeoutSeconds = timeoutSecondsRef.current;
+    const timeoutMs = Math.max(6000, Math.min(30000, timeoutSeconds * 1000));
 
     // Bounded startup watchdog timer
     startupTimeoutRef.current = setTimeout(() => {
-      if (currentLoadId !== channelLoadIdRef.current || isCancelledRef.current) return;
+      if (currentLoadId !== channelLoadIdRef.current || isCancelledRef.current) {
+        logLifecycle(currentLoadId, 'Watchdog expired but was superseded by newer load or cancellation');
+        return;
+      }
 
       setPlaybackState((prev) => {
         if (prev.status === 'loading' || prev.status === 'recovering') {
-          cleanupHls();
+          logLifecycle(
+            currentLoadId,
+            `Connection timed out after ${timeoutSeconds}s waiting for playable media frames.`
+          );
+          cleanupHls('startup_timeout');
+          diagnosticsRef.current.stage = 'timeout';
           const errorInfo = formatPlaybackError(
             'timeout',
-            `Connection timed out after ${connectionTimeoutSeconds}s waiting for playable media frames.`,
+            `Connection timed out after ${timeoutSeconds}s waiting for playable media frames.`,
             undefined,
-            channel
+            currentChannel
           );
           return {
             ...prev,
@@ -412,6 +476,7 @@ export function usePlayer({
 
     // Check MSE support with HLS.js
     if (isHlsSupported()) {
+      logLifecycle(currentLoadId, 'Creating HLS.js instance');
       const hls = new Hls({
         enableWorker: false, // Disabling worker in browser avoids thread serialization delays on fast segments
         lowLatencyMode: false,
@@ -435,11 +500,18 @@ export function usePlayer({
 
       hls.on(Hls.Events.MEDIA_ATTACHED, () => {
         if (currentLoadId !== channelLoadIdRef.current || isCancelledRef.current) return;
+        logLifecycle(currentLoadId, `HLS MEDIA_ATTACHED -> loading source ${streamUrl}`);
+        diagnosticsRef.current.stage = 'manifest_loading';
         hls.loadSource(streamUrl);
       });
 
       hls.on(Hls.Events.MANIFEST_PARSED, (_event, data) => {
         if (currentLoadId !== channelLoadIdRef.current || isCancelledRef.current) return;
+        logLifecycle(
+          currentLoadId,
+          `HLS MANIFEST_PARSED (${data.levels?.length || 0} levels) -> invoking video.play()`
+        );
+        diagnosticsRef.current.stage = 'manifest_parsed';
         const isLive = data.levels.some((lvl) => lvl.details?.live ?? true);
         setPlaybackState((prev) => ({ ...prev, isLive }));
 
@@ -448,39 +520,76 @@ export function usePlayer({
         if (playPromise !== undefined) {
           playPromise
             .then(() => {
-              if (currentLoadId !== channelLoadIdRef.current) return;
+              if (currentLoadId !== channelLoadIdRef.current || isCancelledRef.current) return;
+              logLifecycle(currentLoadId, 'video.play() resolved; waiting for media frames');
               // Verification waits for actual readyState and media time advancement
               verifyActualPlayback(currentLoadId);
             })
             .catch((err) => {
-              if (currentLoadId !== channelLoadIdRef.current) return;
-              if (err.name === 'NotAllowedError') {
+              if (currentLoadId !== channelLoadIdRef.current || isCancelledRef.current) {
+                logLifecycle(
+                  currentLoadId,
+                  `Ignored play() rejection for stale/cancelled load: ${err?.name || err}`
+                );
+                return;
+              }
+              if (err?.name === 'AbortError') {
+                diagnosticsRef.current.abortErrorCount =
+                  (diagnosticsRef.current.abortErrorCount || 0) + 1;
+                logLifecycle(
+                  currentLoadId,
+                  'play() interrupted by new load request (AbortError) - expected during transition'
+                );
+                return;
+              }
+              if (err?.name === 'NotAllowedError') {
                 diagnosticsRef.current.autoplayBlocked = true;
+                logLifecycle(currentLoadId, 'Autoplay blocked by browser policy; retrying muted');
                 video.muted = true;
                 setPlaybackState((prev) => ({ ...prev, isMuted: true }));
                 const mutedPromise = video.play();
                 if (mutedPromise !== undefined) {
                   mutedPromise
                     .then(() => {
-                      if (currentLoadId !== channelLoadIdRef.current) return;
+                      if (currentLoadId !== channelLoadIdRef.current || isCancelledRef.current) return;
+                      logLifecycle(currentLoadId, 'Muted play() resolved; waiting for media frames');
                       verifyActualPlayback(currentLoadId);
                     })
-                    .catch(() => {
-                      if (currentLoadId !== channelLoadIdRef.current) return;
+                    .catch((mErr) => {
+                      if (currentLoadId !== channelLoadIdRef.current || isCancelledRef.current) return;
+                      if (mErr?.name === 'AbortError') {
+                        diagnosticsRef.current.abortErrorCount =
+                          (diagnosticsRef.current.abortErrorCount || 0) + 1;
+                        return;
+                      }
+                      logLifecycle(currentLoadId, `Muted play() also rejected: ${mErr?.name || mErr}`);
                       setPlaybackState((prev) => ({ ...prev, status: 'paused' }));
                     });
                 }
+                return;
               }
+              console.warn(
+                `[MuffinPlayer][load#${currentLoadId}] Playback error after manifest parsed:`,
+                err
+              );
             });
         }
       });
 
       hls.on(Hls.Events.ERROR, (_event, data) => {
-        if (currentLoadId !== channelLoadIdRef.current || isCancelledRef.current) return;
+        if (currentLoadId !== channelLoadIdRef.current || isCancelledRef.current) {
+          logLifecycle(currentLoadId, `Ignored HLS error for stale/cancelled load: ${data.details}`);
+          return;
+        }
 
         const httpStatus = data.response?.code;
         const isExplicitFatalCode =
           httpStatus === 403 || httpStatus === 401 || httpStatus === 404;
+
+        logLifecycle(
+          currentLoadId,
+          `HLS ERROR: type=${data.type}, details=${data.details}, fatal=${data.fatal}, status=${httpStatus}`
+        );
 
         if (httpStatus !== undefined) {
           diagnosticsRef.current.networkErrorCode = httpStatus;
@@ -491,14 +600,15 @@ export function usePlayer({
         // Terminal fatal error: immediate transition to 'error', no infinite loop
         if (isExplicitFatalCode || (data.fatal && recoveryCountRef.current >= MAX_RECOVERIES)) {
           diagnosticsRef.current.hlsFatalError = data.details;
-          cleanupHls();
+          diagnosticsRef.current.stage = 'fatal_error';
+          cleanupHls('fatal_hls_error');
           playbackStatusRef.current = 'error';
 
           const errorInfo = formatPlaybackError(
             data.type === Hls.ErrorTypes.MEDIA_ERROR ? 'mediaError' : 'networkError',
             data.details,
             httpStatus,
-            channel
+            currentChannel
           );
 
           setPlaybackState((prev) => ({
@@ -513,6 +623,7 @@ export function usePlayer({
         if (data.fatal) {
           recoveryCountRef.current += 1;
           diagnosticsRef.current.recoveryAttempts = recoveryCountRef.current;
+          diagnosticsRef.current.stage = 'recovering';
           playbackStatusRef.current = 'recovering';
           setPlaybackState((prev) => ({ ...prev, status: 'recovering' }));
 
@@ -526,13 +637,20 @@ export function usePlayer({
 
             if (hlsRef.current) {
               if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
+                logLifecycle(currentLoadId, 'Invoking hls.recoverMediaError()');
                 hlsRef.current.recoverMediaError();
               } else if (data.type === Hls.ErrorTypes.NETWORK_ERROR) {
+                logLifecycle(currentLoadId, 'Invoking hls.startLoad()');
                 hlsRef.current.startLoad();
               } else {
-                cleanupHls();
+                cleanupHls('unrecoverable_hls_error');
                 playbackStatusRef.current = 'error';
-                const errorInfo = formatPlaybackError(data.type, data.details, httpStatus, channel);
+                const errorInfo = formatPlaybackError(
+                  data.type,
+                  data.details,
+                  httpStatus,
+                  currentChannel
+                );
                 setPlaybackState((prev) => ({
                   ...prev,
                   status: 'error',
@@ -545,37 +663,65 @@ export function usePlayer({
       });
     } else if (canPlayNativeHls(video)) {
       // Native Apple Safari HLS
+      logLifecycle(currentLoadId, `Using native Safari HLS -> ${streamUrl}`);
       video.src = streamUrl;
       const playPromise = video.play();
       if (playPromise !== undefined) {
         playPromise
           .then(() => {
-            if (currentLoadId !== channelLoadIdRef.current) return;
+            if (currentLoadId !== channelLoadIdRef.current || isCancelledRef.current) return;
+            logLifecycle(currentLoadId, 'Native video.play() resolved; waiting for media frames');
             verifyActualPlayback(currentLoadId);
           })
           .catch((err) => {
-            if (currentLoadId !== channelLoadIdRef.current) return;
-            if (err.name === 'NotAllowedError') {
+            if (currentLoadId !== channelLoadIdRef.current || isCancelledRef.current) {
+              logLifecycle(
+                currentLoadId,
+                `Ignored native play() rejection for stale/cancelled load: ${err?.name || err}`
+              );
+              return;
+            }
+            if (err?.name === 'AbortError') {
+              diagnosticsRef.current.abortErrorCount =
+                (diagnosticsRef.current.abortErrorCount || 0) + 1;
+              logLifecycle(
+                currentLoadId,
+                'Native play() interrupted by new load request (AbortError)'
+              );
+              return;
+            }
+            if (err?.name === 'NotAllowedError') {
               diagnosticsRef.current.autoplayBlocked = true;
+              logLifecycle(currentLoadId, 'Native autoplay blocked; retrying muted');
               video.muted = true;
               setPlaybackState((prev) => ({ ...prev, isMuted: true }));
-              video
-                .play()
-                .then(() => {
-                  if (currentLoadId !== channelLoadIdRef.current) return;
-                  verifyActualPlayback(currentLoadId);
-                })
-                .catch(() => {
-                  if (currentLoadId !== channelLoadIdRef.current) return;
-                  setPlaybackState((prev) => ({ ...prev, status: 'paused' }));
-                });
+              const mutedPromise = video.play();
+              if (mutedPromise !== undefined) {
+                mutedPromise
+                  .then(() => {
+                    if (currentLoadId !== channelLoadIdRef.current || isCancelledRef.current) return;
+                    verifyActualPlayback(currentLoadId);
+                  })
+                  .catch((mErr) => {
+                    if (currentLoadId !== channelLoadIdRef.current || isCancelledRef.current) return;
+                    if (mErr?.name === 'AbortError') {
+                      diagnosticsRef.current.abortErrorCount =
+                        (diagnosticsRef.current.abortErrorCount || 0) + 1;
+                      return;
+                    }
+                    setPlaybackState((prev) => ({ ...prev, status: 'paused' }));
+                  });
+              }
+              return;
             }
+            console.warn(`[MuffinPlayer][load#${currentLoadId}] Native playback error:`, err);
           });
       }
     } else {
       // Media Source Extensions unsupported
       diagnosticsRef.current.unsupportedCodec = true;
-      cleanupHls();
+      diagnosticsRef.current.stage = 'unsupported';
+      cleanupHls('mse_unsupported');
       setPlaybackState((prev) => ({
         ...prev,
         status: 'error',
@@ -588,29 +734,7 @@ export function usePlayer({
         },
       }));
     }
-  }, [
-    channel,
-    cleanupHls,
-    initialVolume,
-    initialMuted,
-    connectionTimeoutSeconds,
-    verifyActualPlayback,
-    attachVideoListeners,
-  ]);
-
-  // Video element event listeners effect for cases where videoRef mounts or unmounts
-  useEffect(() => {
-    const video = videoRef.current;
-    if (video) {
-      attachVideoListeners(video, channelLoadIdRef.current);
-    }
-    return () => {
-      if (removeListenersRef.current) {
-        removeListenersRef.current();
-        removeListenersRef.current = null;
-      }
-    };
-  }, [attachVideoListeners]);
+  }, [cleanupHls, verifyActualPlayback, attachVideoListeners]);
 
   // Fullscreen change listener
   useEffect(() => {
@@ -625,15 +749,21 @@ export function usePlayer({
     };
   }, []);
 
-  // Load stream when channel changes
+  // Load stream when channel changes or mounts
   useEffect(() => {
-    loadStream();
+    if (channel) {
+      loadStream();
+    } else {
+      cleanupHls('no_channel');
+      playbackStatusRef.current = 'idle';
+      setPlaybackState((prev) => ({ ...prev, status: 'idle', error: null }));
+    }
 
     return () => {
       isCancelledRef.current = true;
-      cleanupHls();
+      cleanupHls('channel_changed_or_unmounted');
     };
-  }, [channel, loadStream, cleanupHls]);
+  }, [channel?.id, channel?.url, loadStream, cleanupHls]);
 
   const retry = useCallback(() => {
     recoveryCountRef.current = 0;
